@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Message Detail | CATA Email Assistant{% endblock %}
+
+{% block content %}
+  <section class="grid" style="gap: 1rem;">
+    <div class="panel">
+      <p><a href="/queue">Back to queue</a></p>
+      <h2>{{ message.subject or "(No subject)" }}</h2>
+      <div class="kv">
+        <div class="muted">Mailbox</div>
+        <div>{{ message.mailbox.display_name or message.mailbox.gmail_address }}</div>
+        <div class="muted">From</div>
+        <div>{{ message.from_display or "" }} {% if message.from_address %}&lt;{{ message.from_address }}&gt;{% endif %}</div>
+        <div class="muted">Received</div>
+        <div>{{ message.received_at or "Unknown" }}</div>
+        <div class="muted">Status</div>
+        <div>{{ message.status }}</div>
+        <div class="muted">Draft State</div>
+        <div>{{ message.draft_state }}</div>
+        <div class="muted">Gmail Thread</div>
+        <div>
+          {% if message.thread %}
+            <a href="https://mail.google.com/mail/u/0/#all/{{ message.thread.gmail_thread_id }}" target="_blank" rel="noreferrer">Open in Gmail</a>
+          {% else %}
+            Unknown
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Participants</h3>
+      {% if message.participants %}
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Name</th>
+              <th>Email</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for participant in message.participants %}
+              <tr>
+                <td>{{ participant.participant_type }}</td>
+                <td>{{ participant.display_name or "" }}</td>
+                <td>{{ participant.email_address }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No participant metadata was captured.</p>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <h3>Attachments</h3>
+      {% if message.attachments %}
+        <table>
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>MIME Type</th>
+              <th>Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for attachment in message.attachments %}
+              <tr>
+                <td>{{ attachment.filename or "(unnamed attachment)" }}</td>
+                <td>{{ attachment.mime_type or "Unknown" }}</td>
+                <td>{{ attachment.size_bytes or "Unknown" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No attachment metadata.</p>
+      {% endif %}
+    </div>
+
+    <div class="panel body-card">
+      <h3>Body</h3>
+      {{ body_text or message.snippet or "No body content captured." }}
+    </div>
+
+    <div class="panel">
+      <h3>Audit Trail</h3>
+      {% if message.audit_events %}
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Event</th>
+              <th>Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in message.audit_events %}
+              <tr>
+                <td>{{ event.created_at }}</td>
+                <td>{{ event.event_type }}</td>
+                <td>{{ event.summary or "" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No audit events recorded yet.</p>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

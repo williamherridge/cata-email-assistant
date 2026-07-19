@@ -12,10 +12,12 @@ This repository is evolving into a CATA email assistant that:
 
 ## Current focus
 
-The project is in the requirements and planning stage for the full application. Existing code includes:
+The project has now entered `Milestone A` implementation for the lean pilot runtime. Current application work includes:
 
-- Gmail read-only ingestion helpers in `src/gmail_ingest/`
-- taxonomy exploration utilities in `src/email_analytics/` and `web/taxonomy_review_app/`
+- a `FastAPI` admin portal in `src/admin_portal/`
+- `SQLite` persistence and Alembic migrations for the first operational schema
+- Gmail poll and ingest workflow scaffolding in `src/workflow/` and `src/gmail_ingest/`
+- earlier Gmail read-only ingestion helpers and taxonomy exploration utilities
 
 ## Project docs
 
@@ -24,3 +26,12 @@ The project is in the requirements and planning stage for the full application. 
 - `docs/phases.md`: lifecycle phases, milestones, and deliverables
 - `docs/repo_structure.md`: recommended repository structure for project artifacts
 - `docs/taxonomy_review_app.md`: taxonomy review utility
+
+## Local app bootstrap
+
+1. Create or update `config/.env` from `config/.env.example`.
+2. Ensure `DEFAULT_GMAIL_ADDRESS` points at the mailbox you want to pilot.
+3. Run `alembic upgrade head`.
+4. Start the portal with `python -m src.admin_portal.main`.
+
+The queue surface will be available at `http://127.0.0.1:8000/queue`.

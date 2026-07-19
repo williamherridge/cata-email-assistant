@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Queue | CATA Email Assistant{% endblock %}
+
+{% block content %}
+  <section class="grid two">
+    <aside class="grid">
+      <div class="panel">
+        <h2>Mailboxes</h2>
+        {% if mailboxes %}
+          {% for mailbox in mailboxes %}
+            <div class="mailbox-card">
+              <strong>{{ mailbox.display_name or mailbox.gmail_address }}</strong><br />
+              <span class="muted">{{ mailbox.gmail_address }}</span><br />
+              <span class="muted">Last poll: {{ mailbox.last_polled_at or "Never" }}</span>
+              <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" style="margin-top: 0.8rem;">
+                <button type="submit">Poll Now</button>
+              </form>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="muted">No mailbox is configured yet. Add `DEFAULT_GMAIL_ADDRESS` to `config/.env` to auto-register one.</p>
+        {% endif %}
+      </div>
+
+      <div class="panel">
+        <h3>Recent Poll Runs</h3>
+        {% if poll_runs %}
+          {% for poll_run in poll_runs %}
+            <div class="poll-run">
+              <span class="pill">{{ poll_run.status }}</span>
+              <div style="margin-top: 0.45rem;">
+                <strong>{{ poll_run.mailbox.display_name or poll_run.mailbox.gmail_address }}</strong>
+              </div>
+              <div class="muted">Started: {{ poll_run.started_at }}</div>
+              <div class="muted">Discovered: {{ poll_run.messages_discovered }} | Enqueued: {{ poll_run.messages_enqueued }}</div>
+              {% if poll_run.error_summary %}
+                <div style="color: var(--warn); margin-top: 0.35rem;">{{ poll_run.error_summary }}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="muted">No poll history yet.</p>
+        {% endif %}
+      </div>
+    </aside>
+
+    <div class="panel">
+      <h2>Queue</h2>
+      {% if messages %}
+        <table>
+          <thead>
+            <tr>
+              <th>Received</th>
+              <th>From</th>
+              <th>Subject</th>
+              <th>Status</th>
+              <th>Priority</th>
+              <th>Attachments</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for message in messages %}
+              <tr>
+                <td>{{ message.received_at or "Unknown" }}</td>
+                <td>{{ message.from_display or message.from_address or "Unknown" }}</td>
+                <td>
+                  <a href="/messages/{{ message.id }}">{{ message.subject or "(No subject)" }}</a>
+                  <div class="muted">{{ message.mailbox.gmail_address }}</div>
+                </td>
+                <td><span class="pill">{{ message.status }}</span></td>
+                <td>{{ message.priority }}</td>
+                <td>{{ "Yes" if message.has_attachments else "No" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No messages have been ingested yet.</p>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

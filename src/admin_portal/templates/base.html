@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}CATA Email Assistant{% endblock %}</title>
+    <style>
+      :root {
+        --bg: #f4efe4;
+        --panel: #fffdf8;
+        --ink: #1f2a2b;
+        --muted: #607070;
+        --line: #d9cfbf;
+        --accent: #0f766e;
+        --accent-strong: #115e59;
+        --warn: #92400e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 28rem),
+          linear-gradient(180deg, #f7f3ea 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+
+      a {
+        color: var(--accent-strong);
+      }
+
+      .shell {
+        width: min(1180px, calc(100% - 2rem));
+        margin: 0 auto;
+        padding: 2rem 0 3rem;
+      }
+
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: end;
+        margin-bottom: 1.5rem;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(2rem, 3vw, 3.25rem);
+        line-height: 0.95;
+      }
+
+      .hero p {
+        margin: 0.5rem 0 0;
+        color: var(--muted);
+        max-width: 42rem;
+      }
+
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .grid.two {
+        grid-template-columns: 320px minmax(0, 1fr);
+      }
+
+      .panel {
+        background: color-mix(in srgb, var(--panel) 96%, white 4%);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 1.15rem;
+        box-shadow: 0 12px 40px rgba(49, 43, 30, 0.06);
+      }
+
+      .panel h2,
+      .panel h3 {
+        margin: 0 0 0.75rem;
+      }
+
+      .mailbox-card + .mailbox-card,
+      .poll-run + .poll-run {
+        margin-top: 0.8rem;
+        padding-top: 0.8rem;
+        border-top: 1px solid var(--line);
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 0.7rem 1rem;
+        background: var(--accent);
+        color: white;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: var(--accent-strong);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: 0.8rem 0.45rem;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        font-size: 0.85rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.1);
+        color: var(--accent-strong);
+        font-size: 0.82rem;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .body-card {
+        white-space: pre-wrap;
+        line-height: 1.55;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr);
+        gap: 0.5rem 1rem;
+      }
+
+      @media (max-width: 900px) {
+        .grid.two {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          display: block;
+        }
+
+        .kv {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <h1>CATA Email Assistant</h1>
+          <p>Milestone A pilot surface for mailbox polling, queue visibility, and durable Gmail message ingest.</p>
+        </div>
+      </section>
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
