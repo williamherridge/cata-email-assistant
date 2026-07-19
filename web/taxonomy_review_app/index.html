@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Taxonomy Review</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="panel">
+          <h1>Taxonomy Review</h1>
+          <p class="muted">Review samples, label messages, and normalize category names.</p>
+        </div>
+
+        <div class="panel">
+          <label for="run-select">Discovery run</label>
+          <select id="run-select"></select>
+          <button id="load-run-btn" class="button button-primary">Load run</button>
+          <p id="run-meta" class="muted small"></p>
+        </div>
+
+        <div class="panel">
+          <h2>Filters</h2>
+          <label for="status-filter">Review status</label>
+          <select id="status-filter">
+            <option value="all">All</option>
+            <option value="unreviewed">Unreviewed</option>
+            <option value="reviewed">Reviewed</option>
+          </select>
+
+          <label for="direction-filter">Direction</label>
+          <select id="direction-filter">
+            <option value="all">All</option>
+            <option value="inbound">Inbound</option>
+            <option value="sent">Sent</option>
+            <option value="other">Other</option>
+          </select>
+
+          <label for="search-input">Search</label>
+          <input id="search-input" type="text" placeholder="Search subject, snippet, category..." />
+        </div>
+
+        <div class="panel">
+          <h2>Summary</h2>
+          <div id="summary-stats" class="stack small"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Category Counts</h2>
+            <button id="refresh-index-btn" class="button button-ghost">Refresh</button>
+          </div>
+          <div id="category-counts" class="tag-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Shared Catalog</h2>
+            <button id="promote-catalog-btn" class="button button-primary">Promote reviewed labels</button>
+          </div>
+          <p id="catalog-meta" class="muted small"></p>
+          <div id="catalog-counts" class="tag-list"></div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section class="message-list">
+          <div class="panel-header">
+            <h2>Sample Queue</h2>
+            <div class="toolbar">
+              <span id="queue-count" class="muted small"></span>
+              <button id="save-btn" class="button button-primary">Save changes</button>
+            </div>
+          </div>
+          <div id="message-items" class="message-items"></div>
+        </section>
+
+        <section class="message-detail">
+          <div class="panel detail-panel">
+            <div class="panel-header">
+              <h2>Review</h2>
+              <span id="save-status" class="muted small">No changes yet</span>
+            </div>
+
+            <div id="empty-state" class="empty-state">
+              Select a message to review.
+            </div>
+
+            <div id="detail-content" class="detail-content hidden">
+              <div class="detail-header">
+                <div>
+                  <p id="detail-date" class="small muted"></p>
+                  <h3 id="detail-subject"></h3>
+                  <p id="detail-from" class="small"></p>
+                </div>
+                <div class="pill-row">
+                  <span id="detail-direction" class="pill"></span>
+                  <span id="detail-suggested" class="pill pill-accent"></span>
+                </div>
+              </div>
+
+              <div class="stack">
+                <label for="approved-category">Approved category</label>
+                <input id="approved-category" list="category-options" type="text" />
+                <datalist id="category-options"></datalist>
+                <div id="approved-category-suggestions" class="tag-list tag-list-spacious"></div>
+              </div>
+
+              <div class="stack">
+                <label for="approved-subcategory">Approved subcategory</label>
+                <input id="approved-subcategory" list="subcategory-options" type="text" />
+                <datalist id="subcategory-options"></datalist>
+                <div id="approved-subcategory-suggestions" class="tag-list tag-list-spacious"></div>
+              </div>
+
+              <div class="stack">
+                <label for="review-notes">Review notes</label>
+                <textarea id="review-notes" rows="4"></textarea>
+              </div>
+
+              <div class="stack">
+                <span class="label">Keywords</span>
+                <div id="detail-keywords" class="tag-list"></div>
+              </div>
+
+              <div class="stack">
+                <span class="label">Snippet</span>
+                <div id="detail-snippet" class="snippet-box"></div>
+              </div>
+
+              <div class="stack">
+                <span class="label">Labels</span>
+                <div id="detail-labels" class="tag-list"></div>
+              </div>
+
+              <div class="button-row">
+                <button id="prev-btn" class="button button-ghost">Previous</button>
+                <button id="next-btn" class="button button-primary">Next</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <h2>Normalize Labels</h2>
+            <p class="muted small">Apply a rename across the loaded sample so similar labels stay consistent.</p>
+
+            <div class="stack">
+              <label for="normalize-field">Field</label>
+              <select id="normalize-field">
+                <option value="approved_category">Approved category</option>
+                <option value="approved_subcategory">Approved subcategory</option>
+              </select>
+            </div>
+
+            <div class="stack">
+              <label for="normalize-scope">Category scope</label>
+              <input id="normalize-scope" type="text" placeholder="Optional for subcategory renames" />
+            </div>
+
+            <div class="stack">
+              <label for="normalize-old">Current value</label>
+              <input id="normalize-old" type="text" />
+            </div>
+
+            <div class="stack">
+              <label for="normalize-new">New value</label>
+              <input id="normalize-new" type="text" />
+            </div>
+
+            <button id="normalize-btn" class="button button-primary">Apply normalization</button>
+            <p id="normalize-status" class="muted small"></p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

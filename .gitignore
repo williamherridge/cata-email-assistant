@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment
+.env
+config/credentials.json
+config/token.json
+config/*secret*.json
+config/*token*.json
+!config/*.example.json
+
+# VS Code
+.vscode/
+
+# Mac
+.DS_Store
+
+# Local data
+data/raw/*
+data/processed/*
+data/analytics/taxonomy_discovery/*
+
+# Jupyter
+.ipynb_checkpoints/

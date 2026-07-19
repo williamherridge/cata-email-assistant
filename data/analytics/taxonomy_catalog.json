@@ -1,0 +1,131 @@
+{
+  "updated_at": "2026-06-03T14:57:43",
+  "categories": [
+    {
+      "name": "Add/change co-captain",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 15
+    },
+    {
+      "name": "Blackout dates submission",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 5
+    },
+    {
+      "name": "Change divisions request",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 10
+    },
+    {
+      "name": "Discount code request",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 3
+    },
+    {
+      "name": "Ineligible player",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 3
+    },
+    {
+      "name": "Ineligible player for sectionals notification",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 6
+    },
+    {
+      "name": "Informational only",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 18
+    },
+    {
+      "name": "Looking for team",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 18
+    },
+    {
+      "name": "Make-up match line up",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 53
+    },
+    {
+      "name": "Player promotion",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 6
+    },
+    {
+      "name": "Remove player request",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 6
+    },
+    {
+      "name": "Rule clarification request",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 27
+    },
+    {
+      "name": "Scheduling change request",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 2
+    },
+    {
+      "name": "Score correction submission",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 27
+    },
+    {
+      "name": "Spam",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 12
+    },
+    {
+      "name": "Team declaration form",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 4
+    },
+    {
+      "name": "Team registration submission",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 35
+    },
+    {
+      "name": "Whitaker court request",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [],
+      "usage_count": 2
+    }
+  ]
+}

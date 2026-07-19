@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "description": "CATA-curated authoritative rule sources for knowledge-base ingestion.",
+  "sources": [
+    {
+      "id": "2024_national_regulations_texas_operating_procedures",
+      "title": "2024 National Regulations & Texas Operating Procedures",
+      "rule_level": "national",
+      "precedence_rank": 1,
+      "local_path": "data/rules_sources/national/2024 National Regulations & Texas Operating Procedures.pdf",
+      "source_url": "https://docs.google.com/document/d/11gcsJAL-PK0f-M_JZnuNW4ybU5XUbBAJg6qX4nFEuuA/edit?tab=t.0#heading=h.3y19w7pqrjw",
+      "effective_year": 2024,
+      "source_type": "regulations",
+      "status": "active",
+      "notes": "National-level source has highest precedence. Source URL points to the authoritative Google document."
+    },
+    {
+      "id": "2024_section_operating_procedures",
+      "title": "2024 Operating Procedures",
+      "rule_level": "section",
+      "precedence_rank": 2,
+      "local_path": "data/rules_sources/section/2024 Operating Procedures.pdf",
+      "source_url": "https://docs.google.com/document/d/18ab0T-xt-tNf4sPXDey_q0FC88C6n9QHg-wLDuc8-4k/edit?tab=t.0",
+      "effective_year": 2024,
+      "source_type": "operating_procedures",
+      "status": "active",
+      "notes": "Section-level source applies when it does not conflict with national rules."
+    },
+    {
+      "id": "2024_cata_league_regs_0224",
+      "title": "CATA League Regulations 0224",
+      "rule_level": "local",
+      "precedence_rank": 3,
+      "local_path": "data/rules_sources/local/CATA_League_Regs_0224.pdf",
+      "source_url": "https://www.tennisaustin.org/wp-content/uploads/2024/02/CATA_League_Regs_0224.pdf",
+      "effective_year": 2024,
+      "source_type": "league_regulations",
+      "status": "active",
+      "notes": "Local CATA source applies when it does not conflict with national or section rules."
+    }
+  ]
+}
