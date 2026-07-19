@@ -21,8 +21,8 @@ Use this checklist before creating the first GitHub commit for `cata-email-assis
 
 ## Content verification
 
-- Confirm no TennisLink files remain in the repository.
-- Confirm no TennisLink references remain in docs, code, data, or web assets.
+- Confirm no legacy extractor artifacts remain in the repository.
+- Confirm no legacy project references remain in docs, code, data, or web assets.
 - Confirm the repository name is consistently `cata-email-assistant` in visible docs.
 - Confirm the architecture baseline reflects the approved MVP scope.
 
