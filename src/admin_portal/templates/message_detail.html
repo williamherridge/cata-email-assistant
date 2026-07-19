@@ -16,7 +16,7 @@
         <div class="muted">From</div>
         <div>{{ message.from_display or "" }} {% if message.from_address %}&lt;{{ message.from_address }}&gt;{% endif %}</div>
         <div class="muted">Received</div>
-        <div>{{ message.received_at or "Unknown" }}</div>
+        <div>{{ message.received_at|portal_datetime if message.received_at else "Unknown" }}</div>
         <div class="muted">Status</div>
         <div>{{ message.status }}</div>
         <div class="muted">Draft State</div>
@@ -175,7 +175,7 @@
           <tbody>
             {% for event in message.audit_events %}
               <tr>
-                <td>{{ event.created_at }}</td>
+                <td>{{ event.created_at|portal_datetime }}</td>
                 <td>{{ event.event_type }}</td>
                 <td>{{ event.summary or "" }}</td>
               </tr>

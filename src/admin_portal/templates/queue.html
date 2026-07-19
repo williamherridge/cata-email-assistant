@@ -12,7 +12,7 @@
             <div class="mailbox-card">
               <strong>{{ mailbox.display_name or mailbox.gmail_address }}</strong><br />
               <span class="muted">{{ mailbox.gmail_address }}</span><br />
-              <span class="muted">Last poll: {{ mailbox.last_polled_at or "Never" }}</span>
+              <span class="muted">Last poll: {{ mailbox.last_polled_at|portal_datetime }}</span>
               <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" style="margin-top: 0.8rem;" data-poll-form>
                 <button type="submit">Poll Now</button>
               </form>
@@ -32,7 +32,7 @@
               <div style="margin-top: 0.45rem;">
                 <strong>{{ poll_run.mailbox.display_name or poll_run.mailbox.gmail_address }}</strong>
               </div>
-              <div class="muted">Started: {{ poll_run.started_at }}</div>
+              <div class="muted">Started: {{ poll_run.started_at|portal_datetime }}</div>
               <div class="muted">Discovered: {{ poll_run.messages_discovered }} | Enqueued: {{ poll_run.messages_enqueued }}</div>
               {% if poll_run.error_summary %}
                 <div style="color: var(--warn); margin-top: 0.35rem;">{{ poll_run.error_summary }}</div>
@@ -69,7 +69,7 @@
           <tbody>
             {% for message in messages %}
               <tr>
-                <td>{{ message.received_at or "Unknown" }}</td>
+                <td>{{ message.received_at|portal_datetime if message.received_at else "Unknown" }}</td>
                 <td>{{ message.from_display or message.from_address or "Unknown" }}</td>
                 <td>
                   <a href="/messages/{{ message.id }}">{{ message.subject or "(No subject)" }}</a>

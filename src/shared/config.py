@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, alias="APP_PORT")
     app_debug: bool = Field(default=True, alias="APP_DEBUG")
     secret_key: str = Field(default="dev-secret-key", alias="APP_SECRET_KEY")
+    display_timezone: str | None = Field(default=None, alias="APP_DISPLAY_TIMEZONE")
 
     database_url: str = Field(
         default=f"sqlite:///{DEFAULT_DATABASE_PATH}",

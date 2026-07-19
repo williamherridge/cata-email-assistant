@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from src.admin_portal.formatting import format_portal_datetime
 from src.shared.config import get_settings
 from src.shared.database import get_db_session
 from src.workflow.polling import (
@@ -30,6 +31,7 @@ from src.workflow.polling import (
 
 settings = get_settings()
 templates = Jinja2Templates(directory=str(settings.templates_dir))
+templates.env.filters["portal_datetime"] = lambda value: format_portal_datetime(value, settings.display_timezone)
 
 
 @asynccontextmanager
