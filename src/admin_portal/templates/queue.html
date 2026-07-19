@@ -13,7 +13,7 @@
               <strong>{{ mailbox.display_name or mailbox.gmail_address }}</strong><br />
               <span class="muted">{{ mailbox.gmail_address }}</span><br />
               <span class="muted">Last poll: {{ mailbox.last_polled_at or "Never" }}</span>
-              <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" style="margin-top: 0.8rem;">
+              <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" style="margin-top: 0.8rem;" data-poll-form>
                 <button type="submit">Poll Now</button>
               </form>
             </div>

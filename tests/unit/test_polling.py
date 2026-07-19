@@ -44,6 +44,14 @@ class FakeGmailClient:
         }
 
 
+class FakeProfileOnlyGmailClient:
+    def __init__(self, _settings):
+        pass
+
+    def get_profile(self):
+        return {"emailAddress": "discovered@cata.test", "historyId": "222"}
+
+
 def make_session() -> Session:
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
@@ -111,3 +119,17 @@ def test_poll_mailbox_persists_messages_and_work_items(monkeypatch, tmp_path):
     assert {artifact.artifact_type for artifact in artifacts} == {"raw_gmail_message", "normalized_body_text"}
     for artifact in artifacts:
         assert Path(artifact.storage_uri).exists()
+
+
+def test_ensure_default_mailbox_discovers_address_from_gmail_profile(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    settings.default_gmail_address = None
+
+    monkeypatch.setattr(polling, "GmailClient", FakeProfileOnlyGmailClient)
+
+    mailbox = polling.ensure_default_mailbox(session, settings)
+
+    assert mailbox is not None
+    assert mailbox.gmail_address == "discovered@cata.test"
+    assert mailbox.display_name == "Pilot Inbox"

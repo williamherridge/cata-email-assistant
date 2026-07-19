@@ -55,18 +55,29 @@ def ensure_runtime_directories(settings: Settings) -> None:
 
 
 def ensure_default_mailbox(session: Session, settings: Settings) -> Mailbox | None:
-    if not settings.default_gmail_address:
+    mailbox_address = settings.default_gmail_address
+    display_name = settings.default_gmail_display_name
+
+    if not mailbox_address:
+        try:
+            profile = GmailClient(settings).get_profile()
+        except Exception:
+            return None
+        mailbox_address = profile.get("emailAddress")
+        display_name = display_name or mailbox_address
+
+    if not mailbox_address:
         return None
 
     mailbox = session.scalar(
-        select(Mailbox).where(Mailbox.gmail_address == settings.default_gmail_address)
+        select(Mailbox).where(Mailbox.gmail_address == mailbox_address)
     )
     if mailbox:
         return mailbox
 
     mailbox = Mailbox(
-        gmail_address=settings.default_gmail_address,
-        display_name=settings.default_gmail_display_name,
+        gmail_address=mailbox_address,
+        display_name=display_name,
         is_active=True,
     )
     session.add(mailbox)

@@ -102,6 +102,17 @@
         background: var(--accent-strong);
       }
 
+      button[disabled] {
+        opacity: 0.7;
+        cursor: wait;
+      }
+
+      .busy-note {
+        margin-top: 0.6rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -171,5 +182,24 @@
       </section>
       {% block content %}{% endblock %}
     </main>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        document.querySelectorAll("[data-poll-form]").forEach((form) => {
+          form.addEventListener("submit", () => {
+            const button = form.querySelector("button[type='submit']");
+            if (!button) return;
+
+            button.disabled = true;
+            button.dataset.originalLabel = button.textContent;
+            button.textContent = "Polling...";
+
+            const note = document.createElement("div");
+            note.className = "busy-note";
+            note.textContent = "Polling Gmail and refreshing the queue...";
+            form.appendChild(note);
+          });
+        });
+      });
+    </script>
   </body>
 </html>
