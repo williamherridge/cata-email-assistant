@@ -1,4 +1,4 @@
-"""Poll and ingest workflow for Milestone A."""
+"""Poll and ingest workflow for the lean pilot portal."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
@@ -93,6 +94,7 @@ def list_mailboxes(session: Session) -> list[Mailbox]:
 def list_queue_messages(session: Session) -> list[Message]:
     statement = (
         select(Message)
+        .where(Message.status == "new")
         .options(
             selectinload(Message.mailbox),
             selectinload(Message.thread),
@@ -101,7 +103,8 @@ def list_queue_messages(session: Session) -> list[Message]:
         )
         .order_by(desc(Message.received_at), desc(Message.id))
     )
-    return list(session.scalars(statement))
+    messages = list(session.scalars(statement))
+    return [message for message in messages if not is_sent_message(message)]
 
 
 def get_message_detail(session: Session, message_id: int) -> Message | None:
@@ -119,6 +122,90 @@ def get_message_detail(session: Session, message_id: int) -> Message | None:
         )
     )
     return session.scalar(statement)
+
+
+def mark_message_opened(session: Session, message: Message) -> None:
+    message.opened_in_portal_at = utcnow()
+    session.commit()
+
+
+def update_message_review(
+    session: Session,
+    message_id: int,
+    *,
+    priority: str,
+    informational_only: bool,
+    reply_needed: bool | None,
+    proposed_category_label: str | None,
+    proposed_subcategory_label: str | None,
+) -> Message:
+    message = session.get(Message, message_id)
+    if message is None:
+        raise ValueError(f"Message {message_id} was not found.")
+
+    changes: dict[str, dict[str, object | None]] = {}
+    updates = {
+        "priority": priority,
+        "informational_only": informational_only,
+        "reply_needed": reply_needed,
+        "proposed_category_label": proposed_category_label,
+        "proposed_subcategory_label": proposed_subcategory_label,
+    }
+    for field_name, new_value in updates.items():
+        old_value = getattr(message, field_name)
+        if old_value != new_value:
+            changes[field_name] = {"old": old_value, "new": new_value}
+            setattr(message, field_name, new_value)
+
+    if changes:
+        session.add(
+            AuditEvent(
+                mailbox_id=message.mailbox_id,
+                message_id=message.id,
+                event_type="message_review_updated",
+                actor_type="admin_portal",
+                summary="Administrator updated message review fields.",
+                detail_json=json.dumps(changes, sort_keys=True),
+            )
+        )
+
+    session.commit()
+    return get_message_detail(session, message_id) or message
+
+
+def transition_message_status(session: Session, message_id: int, status: str) -> Message:
+    if status not in {"new", "ignored"}:
+        raise ValueError(f"Unsupported message status transition target: {status}")
+
+    message = session.get(Message, message_id)
+    if message is None:
+        raise ValueError(f"Message {message_id} was not found.")
+
+    old_status = message.status
+    if old_status != status:
+        message.status = status
+        if status == "ignored":
+            message.ignored_at = utcnow()
+            summary = "Administrator marked the message ignored."
+            event_type = "message_ignored"
+        else:
+            message.ignored_at = None
+            summary = "Administrator returned the message to the active queue."
+            event_type = "message_reopened"
+
+        session.add(
+            AuditEvent(
+                mailbox_id=message.mailbox_id,
+                message_id=message.id,
+                event_type=event_type,
+                actor_type="admin_portal",
+                summary=summary,
+                detail_json=json.dumps({"old_status": old_status, "new_status": status}, sort_keys=True),
+            )
+        )
+
+    session.commit()
+    return get_message_detail(session, message_id) or message
 
 
 def get_recent_poll_runs(session: Session, limit: int = 10) -> list[PollRun]:
@@ -408,3 +495,40 @@ def read_body_artifact(message: Message) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def parse_review_form(body: bytes) -> dict[str, object]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+
+    priority = (parsed.get("priority", ["normal"])[0] or "normal").strip().lower()
+    if priority not in {"low", "normal", "high", "urgent"}:
+        priority = "normal"
+
+    reply_raw = (parsed.get("reply_needed", ["unknown"])[0] or "unknown").strip().lower()
+    if reply_raw == "yes":
+        reply_needed: bool | None = True
+    elif reply_raw == "no":
+        reply_needed = False
+    else:
+        reply_needed = None
+
+    return {
+        "priority": priority,
+        "informational_only": "informational_only" in parsed,
+        "reply_needed": reply_needed,
+        "proposed_category_label": normalize_optional_text(parsed.get("proposed_category_label", [""])[0]),
+        "proposed_subcategory_label": normalize_optional_text(parsed.get("proposed_subcategory_label", [""])[0]),
+    }
+
+
+def normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def is_sent_message(message: Message) -> bool:
+    mailbox_address = (message.mailbox.gmail_address if message.mailbox else None) or ""
+    from_address = message.from_address or ""
+    return bool(mailbox_address and from_address and mailbox_address.casefold() == from_address.casefold())

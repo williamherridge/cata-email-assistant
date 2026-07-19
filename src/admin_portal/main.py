@@ -19,8 +19,12 @@ from src.workflow.polling import (
     get_recent_poll_runs,
     list_mailboxes,
     list_queue_messages,
+    mark_message_opened,
+    parse_review_form,
     poll_mailbox,
     read_body_artifact,
+    transition_message_status,
+    update_message_review,
 )
 
 
@@ -58,6 +62,8 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
             "messages": list_queue_messages(db),
             "mailboxes": list_mailboxes(db),
             "poll_runs": get_recent_poll_runs(db),
+            "saved": request.query_params.get("saved") == "1",
+            "polled": request.query_params.get("polled") == "1",
         },
     )
 
@@ -67,6 +73,7 @@ def message_detail_page(message_id: int, request: Request, db: Session = Depends
     message = get_message_detail(db, message_id)
     if message is None:
         raise HTTPException(status_code=404, detail="Message not found.")
+    mark_message_opened(db, message)
 
     return templates.TemplateResponse(
         request,
@@ -75,6 +82,7 @@ def message_detail_page(message_id: int, request: Request, db: Session = Depends
             "request": request,
             "message": message,
             "body_text": read_body_artifact(message),
+            "saved": request.query_params.get("saved") == "1",
         },
     )
 
@@ -85,7 +93,42 @@ def poll_mailbox_action(
     db: Session = Depends(get_db_session),
 ):
     poll_mailbox(db, settings, mailbox_id=mailbox_id, trigger_source="portal")
-    return RedirectResponse(url="/queue", status_code=303)
+    return RedirectResponse(url="/queue?polled=1", status_code=303)
+
+
+@app.post("/messages/{message_id}/review")
+async def update_message_review_action(
+    message_id: int,
+    request: Request,
+    db: Session = Depends(get_db_session),
+):
+    message = get_message_detail(db, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    form_data = parse_review_form(await request.body())
+    update_message_review(db, message_id, **form_data)
+    return RedirectResponse(url=f"/messages/{message_id}?saved=1", status_code=303)
+
+
+@app.post("/messages/{message_id}/ignore")
+def ignore_message_action(message_id: int, db: Session = Depends(get_db_session)):
+    message = get_message_detail(db, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    transition_message_status(db, message_id, "ignored")
+    return RedirectResponse(url="/queue?saved=1", status_code=303)
+
+
+@app.post("/messages/{message_id}/reopen")
+def reopen_message_action(message_id: int, db: Session = Depends(get_db_session)):
+    message = get_message_detail(db, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    transition_message_status(db, message_id, "new")
+    return RedirectResponse(url=f"/messages/{message_id}?saved=1", status_code=303)
 
 
 if __name__ == "__main__":

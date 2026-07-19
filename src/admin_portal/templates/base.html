@@ -81,6 +81,11 @@
         margin: 0 0 0.75rem;
       }
 
+      .stack {
+        display: grid;
+        gap: 0.9rem;
+      }
+
       .mailbox-card + .mailbox-card,
       .poll-run + .poll-run {
         margin-top: 0.8rem;
@@ -107,10 +112,34 @@
         cursor: wait;
       }
 
+      .button-row {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      .button-secondary {
+        background: #d8e7e4;
+        color: var(--accent-strong);
+      }
+
+      .button-warn {
+        background: #a4511f;
+      }
+
       .busy-note {
         margin-top: 0.6rem;
         color: var(--muted);
         font-size: 0.92rem;
+      }
+
+      .notice {
+        margin-bottom: 1rem;
+        padding: 0.85rem 1rem;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 118, 110, 0.2);
+        background: rgba(15, 118, 110, 0.08);
+        color: var(--accent-strong);
       }
 
       table {
@@ -157,6 +186,36 @@
         gap: 0.5rem 1rem;
       }
 
+      label {
+        display: grid;
+        gap: 0.35rem;
+        font-weight: 600;
+      }
+
+      input[type="text"],
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 0.7rem 0.8rem;
+        background: white;
+        color: var(--ink);
+        font: inherit;
+      }
+
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        font-weight: 600;
+      }
+
+      .checkbox-row input {
+        width: 1rem;
+        height: 1rem;
+      }
+
       @media (max-width: 900px) {
         .grid.two {
           grid-template-columns: 1fr;
@@ -177,7 +236,7 @@
       <section class="hero">
         <div>
           <h1>CATA Email Assistant</h1>
-          <p>Milestone A pilot surface for mailbox polling, queue visibility, and durable Gmail message ingest.</p>
+          <p>Lean pilot portal for Gmail ingest, active queue review, and early administrator workflow controls.</p>
         </div>
       </section>
       {% block content %}{% endblock %}

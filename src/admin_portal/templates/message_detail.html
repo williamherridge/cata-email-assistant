@@ -5,6 +5,9 @@
 {% block content %}
   <section class="grid" style="gap: 1rem;">
     <div class="panel">
+      {% if saved %}
+        <div class="notice">Review changes were saved.</div>
+      {% endif %}
       <p><a href="/queue">Back to queue</a></p>
       <h2>{{ message.subject or "(No subject)" }}</h2>
       <div class="kv">
@@ -18,6 +21,24 @@
         <div>{{ message.status }}</div>
         <div class="muted">Draft State</div>
         <div>{{ message.draft_state }}</div>
+        <div class="muted">Priority</div>
+        <div>{{ message.priority }}</div>
+        <div class="muted">Reply Needed</div>
+        <div>
+          {% if message.reply_needed is none %}
+            Unknown
+          {% elif message.reply_needed %}
+            Yes
+          {% else %}
+            No
+          {% endif %}
+        </div>
+        <div class="muted">Informational Only</div>
+        <div>{{ "Yes" if message.informational_only else "No" }}</div>
+        <div class="muted">Proposed Category</div>
+        <div>{{ message.proposed_category_label or "Not set" }}</div>
+        <div class="muted">Proposed Subcategory</div>
+        <div>{{ message.proposed_subcategory_label or "Not set" }}</div>
         <div class="muted">Gmail Thread</div>
         <div>
           {% if message.thread %}
@@ -26,6 +47,60 @@
             Unknown
           {% endif %}
         </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Review Controls</h3>
+      <form action="/messages/{{ message.id }}/review" method="post" class="stack">
+        <label>
+          Priority
+          <select name="priority">
+            {% for option in ["low", "normal", "high", "urgent"] %}
+              <option value="{{ option }}" {% if message.priority == option %}selected{% endif %}>{{ option|title }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label>
+          Reply Needed
+          <select name="reply_needed">
+            <option value="unknown" {% if message.reply_needed is none %}selected{% endif %}>Unknown</option>
+            <option value="yes" {% if message.reply_needed %}selected{% endif %}>Yes</option>
+            <option value="no" {% if message.reply_needed is sameas false %}selected{% endif %}>No</option>
+          </select>
+        </label>
+
+        <label class="checkbox-row">
+          <input type="checkbox" name="informational_only" value="1" {% if message.informational_only %}checked{% endif %} />
+          Informational only
+        </label>
+
+        <label>
+          Proposed Category
+          <input type="text" name="proposed_category_label" value="{{ message.proposed_category_label or '' }}" />
+        </label>
+
+        <label>
+          Proposed Subcategory
+          <input type="text" name="proposed_subcategory_label" value="{{ message.proposed_subcategory_label or '' }}" />
+        </label>
+
+        <div class="button-row">
+          <button type="submit">Save Review</button>
+        </div>
+      </form>
+
+      <div class="button-row" style="margin-top: 1rem;">
+        {% if message.status == "ignored" %}
+          <form action="/messages/{{ message.id }}/reopen" method="post">
+            <button type="submit" class="button-secondary">Return To Queue</button>
+          </form>
+        {% else %}
+          <form action="/messages/{{ message.id }}/ignore" method="post">
+            <button type="submit" class="button-warn">Mark Ignored</button>
+          </form>
+        {% endif %}
       </div>
     </div>
 
