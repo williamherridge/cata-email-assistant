@@ -148,3 +148,12 @@ It creates the fastest path to something operationally useful:
 - message detail view
 
 That path will validate the mailbox integration, the schema, and the portal shape before we spend effort on drafts or RAG.
+
+## Parking lot from Milestone A validation
+
+- Make threaded conversations more obvious in the queue.
+- Add a queue hint such as thread message count or grouped conversation rows so related emails are visually connected at a glance.
+- Treat the default queue as an active work list for administrators, not a full mailbox mirror.
+- Hide messages sent from the monitored mailbox from the default queue because they usually represent completed work rather than new tasks.
+- Preserve the ability to review older responded messages and sent-message history in secondary views, but keep them out of the default queue by default.
+- Add future workbench behaviors that support task tracking, including reminders, snooze or hide-until dates, and follow-up management.
