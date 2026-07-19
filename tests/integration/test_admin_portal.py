@@ -102,6 +102,11 @@ def test_queue_and_message_detail_render(tmp_path):
         assert "Pilot Inbox" in queue_response.text
         assert "Sent update" not in queue_response.text
         assert "Already ignored" not in queue_response.text
+        assert "pilot@cata.test</div>" not in queue_response.text
+
+        poll_runs_response = client.get("/poll-runs")
+        assert poll_runs_response.status_code == 200
+        assert "Recent Poll Runs" in poll_runs_response.text
 
         detail_response = client.get(f"/messages/{message.id}")
         assert detail_response.status_code == 200

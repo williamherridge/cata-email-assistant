@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Poll Runs | CATA Email Assistant{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="section-header">
+      <div>
+        <p><a href="/queue">Back to queue</a></p>
+        <h2>Recent Poll Runs</h2>
+      </div>
+    </div>
+
+    {% if poll_runs %}
+      <table>
+        <thead>
+          <tr>
+            <th>Started</th>
+            <th>Mailbox</th>
+            <th>Status</th>
+            <th>Discovered</th>
+            <th>Enqueued</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for poll_run in poll_runs %}
+            <tr>
+              <td>{{ poll_run.started_at|portal_datetime }}</td>
+              <td>{{ poll_run.mailbox.display_name or poll_run.mailbox.gmail_address }}</td>
+              <td><span class="pill">{{ poll_run.status }}</span></td>
+              <td>{{ poll_run.messages_discovered }}</td>
+              <td>{{ poll_run.messages_enqueued }}</td>
+              <td>{{ poll_run.error_summary or "" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No poll history yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

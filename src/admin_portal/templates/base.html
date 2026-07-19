@@ -68,6 +68,10 @@
         grid-template-columns: 320px minmax(0, 1fr);
       }
 
+      .queue-layout {
+        grid-template-columns: 280px minmax(0, 1fr);
+      }
+
       .panel {
         background: color-mix(in srgb, var(--panel) 96%, white 4%);
         border: 1px solid var(--line);
@@ -81,9 +85,43 @@
         margin: 0 0 0.75rem;
       }
 
+      .section-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .section-header h3 {
+        margin-bottom: 0;
+      }
+
       .stack {
         display: grid;
         gap: 0.9rem;
+      }
+
+      .queue-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 1rem;
+      }
+
+      .toolbar-actions {
+        display: flex;
+        align-items: start;
+        justify-content: end;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      .poll-summary {
+        display: grid;
+        justify-items: end;
+        gap: 0.2rem;
+        text-align: right;
       }
 
       .mailbox-card + .mailbox-card,
@@ -221,8 +259,22 @@
           grid-template-columns: 1fr;
         }
 
+        .queue-layout {
+          grid-template-columns: 1fr;
+        }
+
         .hero {
           display: block;
+        }
+
+        .queue-toolbar,
+        .toolbar-actions {
+          display: grid;
+        }
+
+        .poll-summary {
+          justify-items: start;
+          text-align: left;
         }
 
         .kv {

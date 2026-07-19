@@ -3,30 +3,52 @@
 {% block title %}Queue | CATA Email Assistant{% endblock %}
 
 {% block content %}
-  <section class="grid two">
-    <aside class="grid">
-      <div class="panel">
-        <h2>Mailboxes</h2>
+  <section class="panel" style="margin-bottom: 1rem;">
+    <div class="queue-toolbar">
+      <div>
+        <h2 style="margin-bottom: 0.35rem;">Queue</h2>
         {% if mailboxes %}
-          {% for mailbox in mailboxes %}
-            <div class="mailbox-card">
-              <strong>{{ mailbox.display_name or mailbox.gmail_address }}</strong><br />
-              <span class="muted">{{ mailbox.gmail_address }}</span><br />
-              <span class="muted">Last poll: {{ mailbox.last_polled_at|portal_datetime }}</span>
-              <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" style="margin-top: 0.8rem;" data-poll-form>
-                <button type="submit">Poll Now</button>
-              </form>
-            </div>
-          {% endfor %}
+          {% set mailbox = mailboxes[0] %}
+          <div class="muted">
+            {{ mailbox.display_name or mailbox.gmail_address }}
+            {% if mailbox.last_polled_at %}
+              | Last poll: {{ mailbox.last_polled_at|portal_datetime }}
+            {% else %}
+              | Last poll: Never
+            {% endif %}
+          </div>
         {% else %}
-          <p class="muted">No mailbox is configured yet. Add `DEFAULT_GMAIL_ADDRESS` to `config/.env` to auto-register one.</p>
+          <div class="muted">No mailbox is configured yet.</div>
         {% endif %}
       </div>
-
-      <div class="panel">
-        <h3>Recent Poll Runs</h3>
+      <div class="toolbar-actions">
         {% if poll_runs %}
-          {% for poll_run in poll_runs %}
+          {% set recent_poll_run = poll_runs[0] %}
+          <div class="poll-summary">
+            <span class="pill">{{ recent_poll_run.status }}</span>
+            <span class="muted">Latest poll: {{ recent_poll_run.started_at|portal_datetime }}</span>
+            <span class="muted">Discovered {{ recent_poll_run.messages_discovered }} | Enqueued {{ recent_poll_run.messages_enqueued }}</span>
+          </div>
+        {% endif %}
+        {% if mailboxes %}
+          {% set mailbox = mailboxes[0] %}
+          <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" data-poll-form>
+            <button type="submit">Poll Now</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="grid queue-layout">
+    <aside class="grid">
+      <div class="panel">
+        <div class="section-header">
+          <h3>Recent Poll Runs</h3>
+          <a href="/poll-runs">View All</a>
+        </div>
+        {% if poll_runs %}
+          {% for poll_run in poll_runs[:3] %}
             <div class="poll-run">
               <span class="pill">{{ poll_run.status }}</span>
               <div style="margin-top: 0.45rem;">
@@ -46,7 +68,6 @@
     </aside>
 
     <div class="panel">
-      <h2>Queue</h2>
       {% if polled %}
         <div class="notice">Polling finished and the queue has been refreshed.</div>
       {% endif %}
@@ -57,9 +78,9 @@
         <table>
           <thead>
             <tr>
-              <th>Received</th>
               <th>From</th>
               <th>Subject</th>
+              <th>Received</th>
               <th>Status</th>
               <th>Priority</th>
               <th>Review</th>
@@ -69,12 +90,11 @@
           <tbody>
             {% for message in messages %}
               <tr>
-                <td>{{ message.received_at|portal_datetime if message.received_at else "Unknown" }}</td>
                 <td>{{ message.from_display or message.from_address or "Unknown" }}</td>
                 <td>
                   <a href="/messages/{{ message.id }}">{{ message.subject or "(No subject)" }}</a>
-                  <div class="muted">{{ message.mailbox.gmail_address }}</div>
                 </td>
+                <td>{{ message.received_at|queue_received_datetime }}</td>
                 <td><span class="pill">{{ message.status }}</span></td>
                 <td>{{ message.priority }}</td>
                 <td>
