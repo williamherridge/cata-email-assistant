@@ -171,7 +171,11 @@
 
     <div class="panel body-card">
       <h3>Body</h3>
-      {{ body_text or message.snippet or "No body content captured." }}
+      {% if body_html %}
+        <div class="rendered-email-body">{{ body_html|safe }}</div>
+      {% else %}
+        {{ body_text or message.snippet or "No body content captured." }}
+      {% endif %}
     </div>
 
     <div class="panel">

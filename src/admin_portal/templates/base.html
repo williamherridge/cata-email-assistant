@@ -302,6 +302,47 @@
         line-height: 1.55;
       }
 
+      .rendered-email-body {
+        white-space: normal;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+      }
+
+      .rendered-email-body > :first-child {
+        margin-top: 0;
+      }
+
+      .rendered-email-body > :last-child {
+        margin-bottom: 0;
+      }
+
+      .rendered-email-body p,
+      .rendered-email-body div,
+      .rendered-email-body blockquote,
+      .rendered-email-body pre,
+      .rendered-email-body ul,
+      .rendered-email-body ol,
+      .rendered-email-body table {
+        margin: 0 0 0.9rem;
+      }
+
+      .rendered-email-body table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .rendered-email-body td,
+      .rendered-email-body th {
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .rendered-email-body a {
+        color: var(--accent-strong);
+      }
+
       .empty-workbench {
         min-height: 18rem;
         display: grid;

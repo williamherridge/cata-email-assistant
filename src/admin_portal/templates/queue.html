@@ -267,7 +267,13 @@
               <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
             {% endif %}
           </div>
-          <div class="message-body-preview">{{ selected_body_text or selected_message.snippet or "No body content captured." }}</div>
+          <div class="message-body-preview">
+            {% if selected_body_html %}
+              <div class="rendered-email-body">{{ selected_body_html|safe }}</div>
+            {% else %}
+              {{ selected_body_text or selected_message.snippet or "No body content captured." }}
+            {% endif %}
+          </div>
         </div>
       {% else %}
         <div class="panel empty-workbench">

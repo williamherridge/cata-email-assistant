@@ -35,6 +35,7 @@ from src.workflow.polling import (
     parse_return_to,
     poll_mailbox,
     read_body_artifact,
+    read_body_html_artifact,
     transition_message_status,
     update_message_review,
 )
@@ -132,6 +133,7 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
             "reply_subject": build_reply_subject(selected_message) if selected_message else "",
             "draft_html": build_default_draft_html(selected_message) if selected_message else "",
             "selected_body_text": read_body_artifact(selected_message) if selected_message else "",
+            "selected_body_html": read_body_html_artifact(selected_message) if selected_message else "",
             "return_to_queue": build_queue_return_path(selected_id, filter_query),
             "categories": list_active_categories(db),
             "subcategories": list_active_subcategories(db),
@@ -174,6 +176,7 @@ def message_detail_page(message_id: int, request: Request, db: Session = Depends
             "request": request,
             "message": message,
             "body_text": read_body_artifact(message),
+            "body_html": read_body_html_artifact(message),
             "saved": request.query_params.get("saved") == "1",
             "categories": list_active_categories(db),
             "subcategories": list_active_subcategories(db),

@@ -17,12 +17,14 @@ from sqlalchemy.orm import Session, selectinload
 from src.gmail_ingest.client import GmailClient
 from src.gmail_ingest.parsing import (
     collect_attachment_metadata,
+    extract_body_html,
     extract_body_text,
     headers_to_dict,
     parse_address_list,
     parse_datetime_header,
     parse_email_address,
     parse_internal_date,
+    sanitize_email_html,
 )
 from src.shared.config import Settings
 from src.workflow.classification import classify_message_deterministically
@@ -531,7 +533,13 @@ def upsert_message_from_gmail(session: Session, settings: Settings, mailbox: Mai
     message.updated_at = utcnow()
 
     sync_message_children(message, payload)
-    sync_message_artifacts(message, settings, raw_message, extract_body_text(payload))
+    sync_message_artifacts(
+        message,
+        settings,
+        raw_message,
+        extract_body_text(payload),
+        extract_body_html(payload),
+    )
 
     thread.subject_canonical = thread.subject_canonical or subject
     if received_at and (
@@ -579,7 +587,13 @@ def sync_message_children(message: Message, payload: dict) -> None:
         message.attachments.append(MessageAttachment(**attachment))
 
 
-def sync_message_artifacts(message: Message, settings: Settings, raw_message: dict, body_text: str) -> None:
+def sync_message_artifacts(
+    message: Message,
+    settings: Settings,
+    raw_message: dict,
+    body_text: str,
+    body_html: str,
+) -> None:
     mailbox_folder = settings.resolved_artifact_root / "raw-messages" / f"mailbox-{message.mailbox_id}"
     mailbox_folder.mkdir(parents=True, exist_ok=True)
 
@@ -593,9 +607,14 @@ def sync_message_artifacts(message: Message, settings: Settings, raw_message: di
     body_path = body_folder / f"{message.gmail_message_id}.txt"
     body_path.write_text(body_text, encoding="utf-8")
     body_hash = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
+    body_html_sanitized = sanitize_email_html(body_html)
+    body_html_path = body_folder / f"{message.gmail_message_id}.html"
+    body_html_path.write_text(body_html_sanitized, encoding="utf-8")
+    body_html_hash = hashlib.sha256(body_html_sanitized.encode("utf-8")).hexdigest()
 
     upsert_message_artifact(message, "raw_gmail_message", raw_path, raw_hash)
     upsert_message_artifact(message, "normalized_body_text", body_path, body_hash)
+    upsert_message_artifact(message, "sanitized_body_html", body_html_path, body_html_hash)
 
 
 def upsert_message_artifact(message: Message, artifact_type: str, path: Path, content_sha256: str) -> None:
@@ -622,6 +641,29 @@ def read_body_artifact(message: Message) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def read_body_html_artifact(message: Message) -> str:
+    artifact = next((item for item in message.artifacts if item.artifact_type == "sanitized_body_html"), None)
+    if artifact is not None:
+        path = Path(artifact.storage_uri)
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+
+    raw_artifact = next((item for item in message.artifacts if item.artifact_type == "raw_gmail_message"), None)
+    if raw_artifact is None:
+        return ""
+    raw_path = Path(raw_artifact.storage_uri)
+    if not raw_path.exists():
+        return ""
+
+    try:
+        raw_message = json.loads(raw_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+
+    payload = raw_message.get("payload") or {}
+    return sanitize_email_html(extract_body_html(payload))
 
 
 def parse_review_form(body: bytes) -> dict[str, object]:

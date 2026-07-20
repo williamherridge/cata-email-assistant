@@ -257,7 +257,11 @@ def test_poll_mailbox_persists_messages_and_work_items(monkeypatch, tmp_path):
     assert work_items[1].status == "completed"
 
     artifacts = session.scalars(select(MessageArtifact)).all()
-    assert {artifact.artifact_type for artifact in artifacts} == {"raw_gmail_message", "normalized_body_text"}
+    assert {artifact.artifact_type for artifact in artifacts} == {
+        "raw_gmail_message",
+        "normalized_body_text",
+        "sanitized_body_html",
+    }
     for artifact in artifacts:
         assert Path(artifact.storage_uri).exists()
 
@@ -396,3 +400,58 @@ def test_parse_team_registration_fields_handles_mixed_level_and_facility():
 
     assert parsed["Level"] == "Mixed 8.0"
     assert parsed["Facility"] == "Westlake Country Club"
+
+
+def test_read_body_html_artifact_falls_back_to_raw_gmail_message(tmp_path):
+    session = make_session()
+
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(mailbox_id=mailbox.id, gmail_thread_id="thread-html", subject_canonical="HTML body")
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-html",
+        subject="HTML body",
+        from_address="sender@example.com",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    raw_path = tmp_path / "msg-html.json"
+    raw_path.write_text(
+        json.dumps(
+            {
+                "payload": {
+                    "mimeType": "text/html",
+                    "body": {
+                        "data": "PGRpdj48cD5GaXJzdCBsaW5lPC9wPjxwPlNlY29uZCBsaW5lPC9wPjxzY3JpcHQ-YWxlcnQoMSk8L3NjcmlwdD48L2Rpdj4="
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    session.add(
+        MessageArtifact(
+            message_id=message.id,
+            artifact_type="raw_gmail_message",
+            storage_uri=str(raw_path),
+        )
+    )
+    session.commit()
+
+    rendered = polling.read_body_html_artifact(message)
+
+    assert "<p>First line</p>" in rendered
+    assert "<p>Second line</p>" in rendered
+    assert "script" not in rendered
