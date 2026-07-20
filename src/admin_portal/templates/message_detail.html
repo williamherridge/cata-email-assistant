@@ -53,10 +53,11 @@
     <div class="panel">
       <h3>Review Controls</h3>
       <form action="/messages/{{ message.id }}/review" method="post" class="stack">
+        <input type="hidden" name="return_to" value="/messages/{{ message.id }}" />
         <label>
           Priority
           <select name="priority">
-            {% for option in ["low", "normal", "high", "urgent"] %}
+            {% for option in ["critical", "normal", "low"] %}
               <option value="{{ option }}" {% if message.priority == option %}selected{% endif %}>{{ option|title }}</option>
             {% endfor %}
           </select>
@@ -94,10 +95,12 @@
       <div class="button-row" style="margin-top: 1rem;">
         {% if message.status == "ignored" %}
           <form action="/messages/{{ message.id }}/reopen" method="post">
+            <input type="hidden" name="return_to" value="/messages/{{ message.id }}" />
             <button type="submit" class="button-secondary">Return To Queue</button>
           </form>
         {% else %}
           <form action="/messages/{{ message.id }}/ignore" method="post">
+            <input type="hidden" name="return_to" value="/queue" />
             <button type="submit" class="button-warn">Mark Ignored</button>
           </form>
         {% endif %}

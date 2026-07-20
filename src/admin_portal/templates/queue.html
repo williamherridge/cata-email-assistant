@@ -27,7 +27,7 @@
           <div class="poll-summary">
             <span class="pill">{{ recent_poll_run.status }}</span>
             <span class="muted">Latest poll: {{ recent_poll_run.started_at|portal_datetime }}</span>
-            <span class="muted">Discovered {{ recent_poll_run.messages_discovered }} | Enqueued {{ recent_poll_run.messages_enqueued }}</span>
+            <span class="muted"><a href="/poll-runs">View All</a> | Discovered {{ recent_poll_run.messages_discovered }} | Enqueued {{ recent_poll_run.messages_enqueued }}</span>
           </div>
         {% endif %}
         {% if mailboxes %}
@@ -40,79 +40,175 @@
     </div>
   </section>
 
-  <section class="grid queue-layout">
-    <aside class="grid">
-      <div class="panel">
-        <div class="section-header">
-          <h3>Recent Poll Runs</h3>
-          <a href="/poll-runs">View All</a>
-        </div>
-        {% if poll_runs %}
-          {% for poll_run in poll_runs[:3] %}
-            <div class="poll-run">
-              <span class="pill">{{ poll_run.status }}</span>
-              <div style="margin-top: 0.45rem;">
-                <strong>{{ poll_run.mailbox.display_name or poll_run.mailbox.gmail_address }}</strong>
-              </div>
-              <div class="muted">Started: {{ poll_run.started_at|portal_datetime }}</div>
-              <div class="muted">Discovered: {{ poll_run.messages_discovered }} | Enqueued: {{ poll_run.messages_enqueued }}</div>
-              {% if poll_run.error_summary %}
-                <div style="color: var(--warn); margin-top: 0.35rem;">{{ poll_run.error_summary }}</div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        {% else %}
-          <p class="muted">No poll history yet.</p>
-        {% endif %}
-      </div>
-    </aside>
-
-    <div class="panel">
+  <section class="workbench-layout">
+    <div class="panel queue-panel">
       {% if polled %}
         <div class="notice">Polling finished and the queue has been refreshed.</div>
       {% endif %}
       {% if saved %}
         <div class="notice">The queue view was updated after your last message action.</div>
       {% endif %}
+
+      <div class="queue-column-head">
+        <span>From</span>
+        <span>Subject</span>
+        <span class="right">Date</span>
+        <span></span>
+      </div>
+
       {% if messages %}
-        <table>
-          <thead>
-            <tr>
-              <th>From</th>
-              <th>Subject</th>
-              <th>Received</th>
-              <th>Status</th>
-              <th>Priority</th>
-              <th>Review</th>
-              <th>Attachments</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for message in messages %}
-              <tr>
-                <td>{{ message.from_display or message.from_address or "Unknown" }}</td>
-                <td>
-                  <a href="/messages/{{ message.id }}">{{ message.subject or "(No subject)" }}</a>
-                </td>
-                <td>{{ message.received_at|queue_received_datetime }}</td>
-                <td><span class="pill">{{ message.status }}</span></td>
-                <td>{{ message.priority }}</td>
-                <td>
-                  {% if message.reply_needed is none %}
-                    Unknown
-                  {% elif message.reply_needed %}
-                    Reply needed
-                  {% else %}
-                    Informational
-                  {% endif %}
-                </td>
-                <td>{{ "Yes" if message.has_attachments else "No" }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <div class="queue-list">
+          {% for message in messages %}
+            <a
+              href="/queue?selected_message_id={{ message.id }}"
+              class="queue-row {% if selected_message_id == message.id %}selected{% endif %}"
+            >
+              <div class="queue-dot"></div>
+              <div class="queue-from">{{ message.from_display or message.from_address or "Unknown" }}</div>
+              <div class="queue-subject">{{ message.subject or "(No subject)" }}</div>
+              <div class="queue-date">{{ message.received_at|queue_received_datetime }}</div>
+              <div class="queue-meta">
+                {% if message.reply_needed %}
+                  <span class="meta-icon meta-reply" title="Reply needed">↩</span>
+                {% elif message.informational_only %}
+                  <span class="meta-icon meta-info" title="Informational only">i</span>
+                {% endif %}
+
+                {% if message.priority == "critical" %}
+                  <span class="meta-icon meta-critical" title="Critical priority">!</span>
+                {% elif message.priority == "low" %}
+                  <span class="meta-icon meta-low" title="Low priority">↓</span>
+                {% endif %}
+
+                {% if message.has_attachments %}
+                  <span class="meta-icon meta-attachment" title="Has attachments">📎</span>
+                {% endif %}
+              </div>
+            </a>
+          {% endfor %}
+        </div>
       {% else %}
         <p class="muted">No active queue items are visible right now.</p>
+      {% endif %}
+    </div>
+
+    <div class="grid workbench-stack">
+      {% if selected_message %}
+        <div class="panel">
+          <div class="section-header">
+            <div>
+              <h3 style="margin-bottom: 0.3rem;">{{ selected_message.subject or "(No subject)" }}</h3>
+              <div class="muted">
+                From:
+                {{ selected_message.from_display or selected_message.from_address or "Unknown" }}
+                {% if selected_message.received_at %}
+                  | Received {{ selected_message.received_at|portal_datetime }}
+                {% endif %}
+              </div>
+            </div>
+            <div class="button-row">
+              <a href="/messages/{{ selected_message.id }}" class="link-button">Full Detail</a>
+              {% if selected_message.thread %}
+                <a
+                  href="https://mail.google.com/mail/u/0/#all/{{ selected_message.thread.gmail_thread_id }}"
+                  class="link-button"
+                  target="_blank"
+                  rel="noreferrer"
+                >Open In Gmail</a>
+              {% endif %}
+            </div>
+          </div>
+
+          <form action="/messages/{{ selected_message.id }}/review" method="post" class="stack">
+            <input type="hidden" name="return_to" value="{{ return_to_queue }}" />
+            <div class="form-grid two-up">
+              <label>
+                To
+                <input type="text" name="draft_to" value="{{ reply_to_addresses }}" />
+              </label>
+              <label>
+                Cc
+                <input type="text" name="draft_cc" value="{{ reply_cc_addresses }}" />
+              </label>
+              <label class="span-two">
+                Subject
+                <input type="text" name="draft_subject" value="{{ reply_subject }}" />
+              </label>
+              <label>
+                Category
+                <input type="text" name="proposed_category_label" value="{{ selected_message.proposed_category_label or '' }}" />
+              </label>
+              <label>
+                Subcategory
+                <input type="text" name="proposed_subcategory_label" value="{{ selected_message.proposed_subcategory_label or '' }}" />
+              </label>
+              <label>
+                Priority
+                <select name="priority">
+                  {% for option in ["critical", "normal", "low"] %}
+                    <option value="{{ option }}" {% if selected_message.priority == option %}selected{% endif %}>{{ option|title }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Reply Needed
+                <select name="reply_needed">
+                  <option value="unknown" {% if selected_message.reply_needed is none %}selected{% endif %}>Unknown</option>
+                  <option value="yes" {% if selected_message.reply_needed %}selected{% endif %}>Yes</option>
+                  <option value="no" {% if selected_message.reply_needed is sameas false %}selected{% endif %}>No</option>
+                </select>
+              </label>
+            </div>
+
+            <label class="checkbox-row">
+              <input type="checkbox" name="informational_only" value="1" {% if selected_message.informational_only %}checked{% endif %} />
+              Informational only
+            </label>
+
+            <div class="button-row">
+              <button type="submit">Save Review</button>
+              <button type="button" class="button-secondary" disabled>Save Draft</button>
+              <button type="button" class="button-secondary" disabled>Regenerate</button>
+              <button type="button" class="button-secondary" disabled>Send</button>
+            </div>
+          </form>
+
+          <div class="button-row" style="margin-top: 0.9rem;">
+            <form action="/messages/{{ selected_message.id }}/ignore" method="post">
+              <input type="hidden" name="return_to" value="/queue" />
+              <button type="submit" class="button-warn">Ignore</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="section-header">
+            <h3>Reply Draft</h3>
+            <div class="editor-toolbar">
+              <button type="button" class="editor-button" data-editor-command="bold"><strong>B</strong></button>
+              <button type="button" class="editor-button" data-editor-command="italic"><em>I</em></button>
+              <button type="button" class="editor-button" data-editor-command="underline"><u>U</u></button>
+              <button type="button" class="editor-button" data-editor-command="insertUnorderedList">• List</button>
+            </div>
+          </div>
+          <div class="muted" style="margin-bottom: 0.75rem;">Draft editing is local in this pilot slice so we can pressure-test the workbench layout before wiring send and save behavior.</div>
+          <div class="draft-surface" contenteditable="true" data-draft-editor>{{ draft_html|safe }}</div>
+        </div>
+
+        <div class="panel">
+          <div class="section-header">
+            <h3>Original Email</h3>
+            {% if selected_message.attachments %}
+              <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
+            {% endif %}
+          </div>
+          <div class="message-body-preview">{{ selected_body_text or selected_message.snippet or "No body content captured." }}</div>
+        </div>
+      {% else %}
+        <div class="panel empty-workbench">
+          <h3>No Message Selected</h3>
+          <p class="muted">Select a queue item to review metadata, shape a reply, and inspect the original email without leaving this screen.</p>
+        </div>
       {% endif %}
     </div>
   </section>

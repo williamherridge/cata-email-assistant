@@ -144,8 +144,9 @@ def update_message_review(
         raise ValueError(f"Message {message_id} was not found.")
 
     changes: dict[str, dict[str, object | None]] = {}
+    normalized_priority = normalize_priority(priority)
     updates = {
-        "priority": priority,
+        "priority": normalized_priority,
         "informational_only": informational_only,
         "reply_needed": reply_needed,
         "proposed_category_label": proposed_category_label,
@@ -498,11 +499,9 @@ def read_body_artifact(message: Message) -> str:
 
 
 def parse_review_form(body: bytes) -> dict[str, object]:
-    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    parsed = parse_form_body(body)
 
-    priority = (parsed.get("priority", ["normal"])[0] or "normal").strip().lower()
-    if priority not in {"low", "normal", "high", "urgent"}:
-        priority = "normal"
+    priority = normalize_priority((parsed.get("priority", ["normal"])[0] or "normal").strip().lower())
 
     reply_raw = (parsed.get("reply_needed", ["unknown"])[0] or "unknown").strip().lower()
     if reply_raw == "yes":
@@ -521,6 +520,15 @@ def parse_review_form(body: bytes) -> dict[str, object]:
     }
 
 
+def parse_return_to(body: bytes, default: str) -> str:
+    parsed = parse_form_body(body)
+    return normalize_return_to(parsed.get("return_to", [default])[0], default)
+
+
+def parse_form_body(body: bytes) -> dict[str, list[str]]:
+    return parse_qs(body.decode("utf-8"), keep_blank_values=True)
+
+
 def normalize_optional_text(value: str | None) -> str | None:
     if value is None:
         return None
@@ -528,7 +536,67 @@ def normalize_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
+def normalize_priority(value: str | None) -> str:
+    normalized = (value or "normal").strip().lower()
+    legacy_priority_map = {
+        "urgent": "critical",
+        "high": "critical",
+    }
+    normalized = legacy_priority_map.get(normalized, normalized)
+    if normalized not in {"critical", "normal", "low"}:
+        return "normal"
+    return normalized
+
+
+def normalize_return_to(value: str | None, default: str) -> str:
+    candidate = (value or "").strip()
+    if not candidate.startswith("/"):
+        return default
+    return candidate
+
+
 def is_sent_message(message: Message) -> bool:
     mailbox_address = (message.mailbox.gmail_address if message.mailbox else None) or ""
     from_address = message.from_address or ""
     return bool(mailbox_address and from_address and mailbox_address.casefold() == from_address.casefold())
+
+
+def get_reply_to_addresses(message: Message) -> str:
+    if message.from_address:
+        return message.from_address
+    return ""
+
+
+def get_reply_cc_addresses(message: Message) -> str:
+    mailbox_address = (message.mailbox.gmail_address if message.mailbox else "").casefold()
+    primary_from = (message.from_address or "").casefold()
+    cc_addresses: list[str] = []
+    seen = {mailbox_address, primary_from}
+    for participant in message.participants:
+        if participant.participant_type not in {"cc", "to"}:
+            continue
+        normalized = participant.email_address.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        cc_addresses.append(participant.email_address)
+    return ", ".join(cc_addresses)
+
+
+def build_reply_subject(message: Message) -> str:
+    subject = (message.subject or "").strip()
+    if not subject:
+        return "Re:"
+    if subject.lower().startswith("re:"):
+        return subject
+    return f"Re: {subject}"
+
+
+def build_default_draft_html(message: Message) -> str:
+    recipient_name = message.from_display or message.from_address or "there"
+    return (
+        f"<p>Hello {recipient_name},</p>"
+        "<p><br></p>"
+        "<p>Thanks,</p>"
+        "<p><strong>CATA Administrator</strong><br>CATA</p>"
+    )

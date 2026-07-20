@@ -68,10 +68,6 @@
         grid-template-columns: 320px minmax(0, 1fr);
       }
 
-      .queue-layout {
-        grid-template-columns: 280px minmax(0, 1fr);
-      }
-
       .panel {
         background: color-mix(in srgb, var(--panel) 96%, white 4%);
         border: 1px solid var(--line);
@@ -122,6 +118,194 @@
         justify-items: end;
         gap: 0.2rem;
         text-align: right;
+      }
+
+      .workbench-layout {
+        display: grid;
+        grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+
+      .workbench-stack {
+        gap: 1rem;
+      }
+
+      .queue-panel {
+        padding: 0.75rem 0;
+        overflow: hidden;
+      }
+
+      .queue-column-head {
+        display: grid;
+        grid-template-columns: 1.1rem minmax(0, 1.05fr) minmax(0, 0.8fr) 5.5rem 4.5rem;
+        gap: 0.75rem;
+        padding: 0 1.15rem 0.7rem;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      .queue-column-head .right {
+        text-align: right;
+      }
+
+      .queue-list {
+        display: grid;
+      }
+
+      .queue-row {
+        display: grid;
+        grid-template-columns: 1.1rem minmax(0, 1.05fr) minmax(0, 0.8fr) 5.5rem 4.5rem;
+        gap: 0.75rem;
+        align-items: start;
+        padding: 0.9rem 1.15rem;
+        color: inherit;
+        text-decoration: none;
+        border-left: 4px solid transparent;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .queue-row:hover {
+        background: rgba(15, 118, 110, 0.04);
+      }
+
+      .queue-row.selected {
+        background: rgba(15, 118, 110, 0.08);
+        border-left-color: var(--accent);
+      }
+
+      .queue-dot {
+        width: 0.65rem;
+        height: 0.65rem;
+        margin-top: 0.4rem;
+        border-radius: 999px;
+        background: #3b82f6;
+      }
+
+      .queue-from,
+      .queue-subject {
+        display: -webkit-box;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-height: 1.25;
+      }
+
+      .queue-from {
+        font-weight: 700;
+      }
+
+      .queue-subject {
+        font-weight: 700;
+      }
+
+      .queue-date {
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .queue-meta {
+        min-height: 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.35rem;
+      }
+
+      .meta-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.2rem;
+        min-height: 1.2rem;
+        font-size: 0.95rem;
+        font-weight: 700;
+      }
+
+      .meta-reply {
+        color: #1d4ed8;
+      }
+
+      .meta-info {
+        color: #0f766e;
+      }
+
+      .meta-critical {
+        color: #b91c1c;
+      }
+
+      .meta-low {
+        color: #475569;
+      }
+
+      .meta-attachment {
+        color: #475569;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 0.9rem;
+      }
+
+      .form-grid.two-up {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .span-two {
+        grid-column: 1 / -1;
+      }
+
+      .link-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.65rem 0.95rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.75);
+        text-decoration: none;
+      }
+
+      .editor-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+      }
+
+      .editor-button {
+        padding: 0.45rem 0.7rem;
+        border-radius: 12px;
+        background: #d8e7e4;
+        color: var(--accent-strong);
+      }
+
+      .draft-surface {
+        min-height: 320px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 1rem;
+        background: white;
+        line-height: 1.55;
+      }
+
+      .draft-surface:focus {
+        outline: 2px solid rgba(15, 118, 110, 0.2);
+        outline-offset: 2px;
+      }
+
+      .message-body-preview {
+        white-space: pre-wrap;
+        line-height: 1.55;
+      }
+
+      .empty-workbench {
+        min-height: 18rem;
+        display: grid;
+        align-content: center;
       }
 
       .mailbox-card + .mailbox-card,
@@ -259,14 +443,11 @@
           grid-template-columns: 1fr;
         }
 
-        .queue-layout {
-          grid-template-columns: 1fr;
-        }
-
         .hero {
           display: block;
         }
 
+        .workbench-layout,
         .queue-toolbar,
         .toolbar-actions {
           display: grid;
@@ -279,6 +460,20 @@
 
         .kv {
           grid-template-columns: 1fr;
+        }
+
+        .queue-column-head,
+        .queue-row,
+        .form-grid.two-up {
+          grid-template-columns: 1fr;
+        }
+
+        .queue-dot {
+          display: none;
+        }
+
+        .queue-date {
+          text-align: left;
         }
       }
     </style>
@@ -308,6 +503,14 @@
             note.className = "busy-note";
             note.textContent = "Polling Gmail and refreshing the queue...";
             form.appendChild(note);
+          });
+        });
+
+        document.querySelectorAll("[data-editor-command]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const command = button.dataset.editorCommand;
+            if (!command) return;
+            document.execCommand(command, false);
           });
         });
       });

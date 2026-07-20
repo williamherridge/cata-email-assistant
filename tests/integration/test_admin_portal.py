@@ -102,7 +102,9 @@ def test_queue_and_message_detail_render(tmp_path):
         assert "Pilot Inbox" in queue_response.text
         assert "Sent update" not in queue_response.text
         assert "Already ignored" not in queue_response.text
-        assert "pilot@cata.test</div>" not in queue_response.text
+        assert "Reply Draft" in queue_response.text
+        assert "Original Email" in queue_response.text
+        assert "Full Detail" in queue_response.text
 
         poll_runs_response = client.get("/poll-runs")
         assert poll_runs_response.status_code == 200
@@ -116,7 +118,8 @@ def test_queue_and_message_detail_render(tmp_path):
         review_response = client.post(
             f"/messages/{message.id}/review",
             data={
-                "priority": "high",
+                "return_to": f"/queue?selected_message_id={message.id}",
+                "priority": "critical",
                 "reply_needed": "yes",
                 "informational_only": "1",
                 "proposed_category_label": "Registration",
@@ -125,12 +128,12 @@ def test_queue_and_message_detail_render(tmp_path):
             follow_redirects=True,
         )
         assert review_response.status_code == 200
-        assert "Review changes were saved." in review_response.text
+        assert "The queue view was updated after your last message action." in review_response.text
         session.expire_all()
 
         refreshed = session.get(Message, message.id)
         assert refreshed is not None
-        assert refreshed.priority == "high"
+        assert refreshed.priority == "critical"
         assert refreshed.reply_needed is True
         assert refreshed.informational_only is True
         assert refreshed.proposed_category_label == "Registration"
@@ -139,7 +142,11 @@ def test_queue_and_message_detail_render(tmp_path):
         event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
         assert "message_review_updated" in event_types
 
-        ignore_response = client.post(f"/messages/{message.id}/ignore", follow_redirects=True)
+        ignore_response = client.post(
+            f"/messages/{message.id}/ignore",
+            data={"return_to": "/queue"},
+            follow_redirects=True,
+        )
         assert ignore_response.status_code == 200
         assert "The queue view was updated after your last message action." in ignore_response.text
         assert "Registration question" not in ignore_response.text
@@ -153,7 +160,11 @@ def test_queue_and_message_detail_render(tmp_path):
         event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
         assert "message_ignored" in event_types
 
-        reopen_response = client.post(f"/messages/{message.id}/reopen", follow_redirects=True)
+        reopen_response = client.post(
+            f"/messages/{message.id}/reopen",
+            data={"return_to": f"/messages/{message.id}"},
+            follow_redirects=True,
+        )
         assert reopen_response.status_code == 200
         assert "Review changes were saved." in reopen_response.text
 

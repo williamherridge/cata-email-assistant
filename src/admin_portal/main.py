@@ -18,14 +18,19 @@ from src.admin_portal.formatting import (
 from src.shared.config import get_settings
 from src.shared.database import get_db_session
 from src.workflow.polling import (
+    build_default_draft_html,
+    build_reply_subject,
     ensure_default_mailbox,
     ensure_runtime_directories,
     get_message_detail,
+    get_reply_cc_addresses,
+    get_reply_to_addresses,
     get_recent_poll_runs,
     list_mailboxes,
     list_queue_messages,
     mark_message_opened,
     parse_review_form,
+    parse_return_to,
     poll_mailbox,
     read_body_artifact,
     transition_message_status,
@@ -66,16 +71,36 @@ def root() -> RedirectResponse:
 @app.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request, db: Session = Depends(get_db_session)):
     ensure_default_mailbox(db, settings)
+    messages = list_queue_messages(db)
+    selected_message = None
+    selected_message_id = request.query_params.get("selected_message_id")
+    selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
+    if messages:
+        available_ids = {message.id for message in messages}
+        if selected_id not in available_ids:
+            selected_id = messages[0].id
+        selected_message = get_message_detail(db, selected_id)
+        if selected_message is not None:
+            mark_message_opened(db, selected_message)
+
     return templates.TemplateResponse(
         request,
         name="queue.html",
         context={
             "request": request,
-            "messages": list_queue_messages(db),
+            "messages": messages,
             "mailboxes": list_mailboxes(db),
             "poll_runs": get_recent_poll_runs(db),
             "saved": request.query_params.get("saved") == "1",
             "polled": request.query_params.get("polled") == "1",
+            "selected_message": selected_message,
+            "selected_message_id": selected_id,
+            "reply_to_addresses": get_reply_to_addresses(selected_message) if selected_message else "",
+            "reply_cc_addresses": get_reply_cc_addresses(selected_message) if selected_message else "",
+            "reply_subject": build_reply_subject(selected_message) if selected_message else "",
+            "draft_html": build_default_draft_html(selected_message) if selected_message else "",
+            "selected_body_text": read_body_artifact(selected_message) if selected_message else "",
+            "return_to_queue": f"/queue?selected_message_id={selected_id}" if selected_id else "/queue",
         },
     )
 
@@ -131,29 +156,38 @@ async def update_message_review_action(
     if message is None:
         raise HTTPException(status_code=404, detail="Message not found.")
 
-    form_data = parse_review_form(await request.body())
+    body = await request.body()
+    form_data = parse_review_form(body)
+    return_to = parse_return_to(body, f"/messages/{message_id}?saved=1")
     update_message_review(db, message_id, **form_data)
-    return RedirectResponse(url=f"/messages/{message_id}?saved=1", status_code=303)
+    separator = "&" if "?" in return_to else "?"
+    return RedirectResponse(url=f"{return_to}{separator}saved=1", status_code=303)
 
 
 @app.post("/messages/{message_id}/ignore")
-def ignore_message_action(message_id: int, db: Session = Depends(get_db_session)):
+async def ignore_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
     message = get_message_detail(db, message_id)
     if message is None:
         raise HTTPException(status_code=404, detail="Message not found.")
 
+    body = await request.body()
+    return_to = parse_return_to(body, "/queue")
     transition_message_status(db, message_id, "ignored")
-    return RedirectResponse(url="/queue?saved=1", status_code=303)
+    separator = "&" if "?" in return_to else "?"
+    return RedirectResponse(url=f"{return_to}{separator}saved=1", status_code=303)
 
 
 @app.post("/messages/{message_id}/reopen")
-def reopen_message_action(message_id: int, db: Session = Depends(get_db_session)):
+async def reopen_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
     message = get_message_detail(db, message_id)
     if message is None:
         raise HTTPException(status_code=404, detail="Message not found.")
 
+    body = await request.body()
+    return_to = parse_return_to(body, f"/messages/{message_id}")
     transition_message_status(db, message_id, "new")
-    return RedirectResponse(url=f"/messages/{message_id}?saved=1", status_code=303)
+    separator = "&" if "?" in return_to else "?"
+    return RedirectResponse(url=f"{return_to}{separator}saved=1", status_code=303)
 
 
 if __name__ == "__main__":
