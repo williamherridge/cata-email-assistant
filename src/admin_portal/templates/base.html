@@ -34,9 +34,9 @@
       }
 
       .shell {
-        width: min(1180px, calc(100% - 2rem));
+        width: min(1680px, calc(100% - 1rem));
         margin: 0 auto;
-        padding: 2rem 0 3rem;
+        padding: 1rem 0 2rem;
       }
 
       .hero {
@@ -122,7 +122,7 @@
 
       .workbench-layout {
         display: grid;
-        grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
+        grid-template-columns: minmax(520px, 640px) minmax(0, 1fr);
         gap: 1rem;
         align-items: start;
       }
@@ -138,7 +138,7 @@
 
       .queue-column-head {
         display: grid;
-        grid-template-columns: 1.1rem minmax(0, 1.05fr) minmax(0, 0.8fr) 5.5rem 4.5rem;
+        grid-template-columns: 1.1rem minmax(0, 1fr) minmax(0, 1.35fr) 5rem 3rem;
         gap: 0.75rem;
         padding: 0 1.15rem 0.7rem;
         border-bottom: 1px solid var(--line);
@@ -159,7 +159,7 @@
 
       .queue-row {
         display: grid;
-        grid-template-columns: 1.1rem minmax(0, 1.05fr) minmax(0, 0.8fr) 5.5rem 4.5rem;
+        grid-template-columns: 1.1rem minmax(0, 1fr) minmax(0, 1.35fr) 5rem 3rem;
         gap: 0.75rem;
         align-items: start;
         padding: 0.9rem 1.15rem;
@@ -213,7 +213,7 @@
         display: flex;
         align-items: center;
         justify-content: flex-start;
-        gap: 0.35rem;
+        gap: 0.2rem;
       }
 
       .meta-icon {
@@ -364,6 +364,10 @@
         color: var(--accent-strong);
       }
 
+      .mobile-only {
+        display: none;
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -439,6 +443,11 @@
       }
 
       @media (max-width: 900px) {
+        .shell {
+          width: min(100%, calc(100% - 0.5rem));
+          padding-top: 0.5rem;
+        }
+
         .grid.two {
           grid-template-columns: 1fr;
         }
@@ -451,6 +460,14 @@
         .queue-toolbar,
         .toolbar-actions {
           display: grid;
+        }
+
+        .workbench-stack {
+          display: none;
+        }
+
+        .mobile-only {
+          display: block;
         }
 
         .poll-summary {
@@ -468,12 +485,24 @@
           grid-template-columns: 1fr;
         }
 
+        .queue-column-head {
+          display: none;
+        }
+
+        .queue-row {
+          gap: 0.35rem;
+        }
+
         .queue-dot {
           display: none;
         }
 
         .queue-date {
           text-align: left;
+        }
+
+        .queue-meta {
+          min-height: auto;
         }
       }
     </style>
@@ -513,6 +542,16 @@
             document.execCommand(command, false);
           });
         });
+
+        const updateQueueLinksForViewport = () => {
+          const mobile = window.matchMedia("(max-width: 900px)").matches;
+          document.querySelectorAll("[data-desktop-href][data-mobile-href]").forEach((link) => {
+            link.setAttribute("href", mobile ? link.dataset.mobileHref : link.dataset.desktopHref);
+          });
+        };
+
+        updateQueueLinksForViewport();
+        window.addEventListener("resize", updateQueueLinksForViewport);
       });
     </script>
   </body>

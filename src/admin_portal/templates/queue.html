@@ -48,8 +48,10 @@
       {% if saved %}
         <div class="notice">The queue view was updated after your last message action.</div>
       {% endif %}
+      <div class="notice mobile-only">Tap a message to open the review and drafting screen.</div>
 
       <div class="queue-column-head">
+        <span></span>
         <span>From</span>
         <span>Subject</span>
         <span class="right">Date</span>
@@ -61,6 +63,8 @@
           {% for message in messages %}
             <a
               href="/queue?selected_message_id={{ message.id }}"
+              data-desktop-href="/queue?selected_message_id={{ message.id }}"
+              data-mobile-href="/messages/{{ message.id }}"
               class="queue-row {% if selected_message_id == message.id %}selected{% endif %}"
             >
               <div class="queue-dot"></div>
