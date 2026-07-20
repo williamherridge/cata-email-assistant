@@ -30,6 +30,7 @@ def test_sync_taxonomy_catalog_normalizes_and_excludes_labels(tmp_path: Path):
                     {"name": "Informational only"},
                     {"name": "Ineligible player"},
                     {"name": "Ineligible player for sectionals notification"},
+                    {"name": "Make-up match line up"},
                     {"name": "Rule clarification request"},
                 ],
             }
@@ -39,12 +40,13 @@ def test_sync_taxonomy_catalog_normalizes_and_excludes_labels(tmp_path: Path):
 
     added = sync_taxonomy_catalog(session, catalog_path)
 
-    assert added == 2
+    assert added == 3
 
     categories = list(session.scalars(select(Category).order_by(Category.name)))
     assert {category.name for category in categories} == {
         "Informational only",
         "Ineligible player",
+        "Make-up match line up",
         "Rule clarification request",
     }
 
@@ -53,3 +55,9 @@ def test_sync_taxonomy_catalog_normalizes_and_excludes_labels(tmp_path: Path):
 
     ineligible = next(category for category in categories if category.name == "Ineligible player")
     assert ineligible.is_active is True
+
+    makeup = next(category for category in categories if category.name == "Make-up match line up")
+    assert makeup.default_draft_behavior == "manual_processing"
+    assert makeup.default_reply_needed is False
+    assert makeup.default_informational_only is False
+    assert makeup.priority_hint == "normal"

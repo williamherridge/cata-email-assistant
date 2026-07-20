@@ -23,6 +23,8 @@ from src.gmail_ingest.parsing import (
     parse_internal_date,
 )
 from src.shared.config import Settings
+from src.workflow.classification import classify_message_deterministically
+from src.workflow.taxonomy import sync_taxonomy_catalog
 from src.shared.models import (
     AuditEvent,
     Category,
@@ -231,6 +233,8 @@ def get_recent_poll_runs(session: Session, limit: int = 10) -> list[PollRun]:
 
 def poll_mailbox(session: Session, settings: Settings, mailbox_id: int, trigger_source: str = "portal") -> PollOutcome:
     ensure_runtime_directories(settings)
+    if hasattr(settings, "taxonomy_catalog_path"):
+        sync_taxonomy_catalog(session, settings.taxonomy_catalog_path)
 
     mailbox = session.get(Mailbox, mailbox_id)
     if mailbox is None:
@@ -274,7 +278,8 @@ def poll_mailbox(session: Session, settings: Settings, mailbox_id: int, trigger_
 
         persisted_count = 0
         for work_item in ingest_items:
-            ingest_message_work_item(session, settings, client, mailbox, poll_run, work_item)
+            analyze_item = ingest_message_work_item(session, settings, client, mailbox, poll_run, work_item)
+            analyze_message_work_item(session, analyze_item)
             persisted_count += 1
 
         mailbox.last_successful_history_id = discovery.history_id or mailbox.last_successful_history_id
@@ -326,7 +331,7 @@ def ingest_message_work_item(
     mailbox: Mailbox,
     poll_run: PollRun,
     work_item: WorkItem,
-) -> None:
+) -> WorkItem:
     payload = json.loads(work_item.payload_json or "{}")
     gmail_message_id = payload["gmail_message_id"]
 
@@ -343,17 +348,16 @@ def ingest_message_work_item(
     work_item.completed_at = utcnow()
     work_item.error_summary = None
 
-    session.add(
-        WorkItem(
-            work_type="analyze_message",
-            status="pending",
-            mailbox_id=mailbox.id,
-            message_id=message.id,
-            poll_run_id=poll_run.id,
-            payload_json=json.dumps({"message_id": message.id}),
-            scheduled_for=utcnow(),
-        )
+    analyze_item = WorkItem(
+        work_type="analyze_message",
+        status="pending",
+        mailbox_id=mailbox.id,
+        message_id=message.id,
+        poll_run_id=poll_run.id,
+        payload_json=json.dumps({"message_id": message.id}),
+        scheduled_for=utcnow(),
     )
+    session.add(analyze_item)
     session.add(
         AuditEvent(
             mailbox_id=mailbox.id,
@@ -364,6 +368,81 @@ def ingest_message_work_item(
         )
     )
     session.flush()
+    return analyze_item
+
+
+def analyze_message_work_item(session: Session, work_item: WorkItem) -> None:
+    if work_item.work_type != "analyze_message":
+        raise ValueError(f"Unsupported analysis work item type: {work_item.work_type}")
+
+    message = session.get(Message, work_item.message_id)
+    if message is None:
+        raise ValueError(f"Message {work_item.message_id} was not found for analysis.")
+
+    work_item.status = "running"
+    work_item.attempt_count += 1
+    work_item.started_at = utcnow()
+    session.flush()
+
+    result = None
+    if message.assigned_category_id is None:
+        result = apply_deterministic_classification(session, message)
+
+    work_item.status = "completed"
+    work_item.completed_at = utcnow()
+    work_item.error_summary = None
+
+    if result is None:
+        session.add(
+            AuditEvent(
+                mailbox_id=message.mailbox_id,
+                message_id=message.id,
+                event_type="message_analysis_completed",
+                summary="Deterministic analysis completed without an automatic category assignment.",
+            )
+        )
+
+    session.flush()
+
+
+def apply_deterministic_classification(session: Session, message: Message) -> Category | None:
+    body_text = read_body_artifact(message)
+    result = classify_message_deterministically(message, body_text)
+    if result is None:
+        return None
+
+    category = session.scalar(
+        select(Category).where(Category.name == result.category_name, Category.is_active.is_(True))
+    )
+    if category is None:
+        return None
+
+    message.assigned_category_id = category.id
+    if message.reply_needed is None:
+        message.reply_needed = result.reply_needed
+    message.informational_only = result.informational_only
+    message.priority = normalize_priority(result.priority)
+
+    session.add(
+        AuditEvent(
+            mailbox_id=message.mailbox_id,
+            message_id=message.id,
+            event_type="message_auto_classified",
+            summary=f"Deterministic rules assigned category '{category.name}'.",
+            detail_json=json.dumps(
+                {
+                    "category_name": category.name,
+                    "rule_code": result.rule_code,
+                    "reason_summary": result.reason_summary,
+                    "reply_needed": result.reply_needed,
+                    "informational_only": result.informational_only,
+                    "priority": normalize_priority(result.priority),
+                },
+                sort_keys=True,
+            ),
+        )
+    )
+    return category
 
 
 def upsert_message_from_gmail(session: Session, settings: Settings, mailbox: Mailbox, raw_message: dict) -> Message:

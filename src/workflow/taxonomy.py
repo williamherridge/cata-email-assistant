@@ -14,6 +14,15 @@ EXCLUDED_CATEGORY_NAMES = {"informational only"}
 CATEGORY_NAME_NORMALIZATION = {
     "ineligible player for sectionals notification": "Ineligible player",
 }
+CATEGORY_PROFILES = {
+    "make-up match line up": {
+        "description": "Structured CATA form submission that captures a make-up match lineup.",
+        "default_draft_behavior": "manual_processing",
+        "default_reply_needed": False,
+        "default_informational_only": False,
+        "priority_hint": "normal",
+    },
+}
 
 
 def normalize_catalog_category_name(name: str) -> str | None:
@@ -23,6 +32,19 @@ def normalize_catalog_category_name(name: str) -> str | None:
     if normalized.casefold() in EXCLUDED_CATEGORY_NAMES:
         return None
     return CATEGORY_NAME_NORMALIZATION.get(normalized.casefold(), normalized)
+
+
+def apply_category_profile(category: Category) -> bool:
+    profile = CATEGORY_PROFILES.get(category.name.casefold())
+    if profile is None:
+        return False
+
+    changed = False
+    for field_name, new_value in profile.items():
+        if getattr(category, field_name) != new_value:
+            setattr(category, field_name, new_value)
+            changed = True
+    return changed
 
 
 def sync_taxonomy_catalog(session: Session, catalog_path: Path) -> int:
@@ -39,13 +61,17 @@ def sync_taxonomy_catalog(session: Session, catalog_path: Path) -> int:
         if normalize_catalog_category_name(category.name) is None:
             category.is_active = False
             changed = True
+            continue
+        changed = apply_category_profile(category) or changed
 
     for entry in catalog.get("categories", []):
         raw_name = str(entry.get("name", ""))
         name = normalize_catalog_category_name(raw_name)
         if not name or name.casefold() in existing:
             continue
-        session.add(Category(name=name, is_active=True))
+        category = Category(name=name, is_active=True)
+        apply_category_profile(category)
+        session.add(category)
         existing.add(name.casefold())
         added += 1
 
