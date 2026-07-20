@@ -7,12 +7,27 @@ from dataclasses import dataclass
 from src.shared.models import Category, Message
 
 MAKEUP_LINEUP_CATEGORY = "Make-up match line up"
+TEAM_REGISTRATION_CATEGORY = "Team registration submission"
 REPLY_PREFIXES = ("re:", "fw:", "fwd:")
 MAKEUP_LINEUP_SUBJECT_PREFIX = "make-up match line up from"
+TEAM_REGISTRATION_SUBJECT_MARKERS = (
+    "team registration from",
+    "new spring team registration from",
+    "new fall team registration from",
+    "new winter team registration from",
+    "new summer team registration from",
+)
 MAKEUP_LINEUP_REQUIRED_BODY_MARKERS = (
     "original match number",
     "captain's name",
     "opposing captain",
+)
+TEAM_REGISTRATION_REQUIRED_BODY_MARKERS = (
+    "captain name",
+    "captain usta number",
+    "registration type",
+    "team name",
+    "league ntrp level of play",
 )
 
 
@@ -28,6 +43,9 @@ class ClassificationResult:
 
 def classify_message_deterministically(message: Message, body_text: str) -> ClassificationResult | None:
     result = classify_makeup_match_lineup(message, body_text)
+    if result is not None:
+        return result
+    result = classify_team_registration_submission(message, body_text)
     if result is not None:
         return result
     return None
@@ -59,6 +77,35 @@ def classify_makeup_match_lineup(message: Message, body_text: str) -> Classifica
             "and required body markers."
         ),
         rule_code="makeup_lineup_form_v1",
+    )
+
+
+def classify_team_registration_submission(message: Message, body_text: str) -> ClassificationResult | None:
+    from_address = (message.from_address or "").strip().casefold()
+    subject = (message.subject or "").strip()
+    subject_lower = subject.casefold()
+
+    if from_address != "no-reply@austintennis.org":
+        return None
+    if subject_lower.startswith(REPLY_PREFIXES):
+        return None
+    if not any(marker in subject_lower for marker in TEAM_REGISTRATION_SUBJECT_MARKERS):
+        return None
+
+    normalized_body = body_text.casefold()
+    if not all(marker in normalized_body for marker in TEAM_REGISTRATION_REQUIRED_BODY_MARKERS):
+        return None
+
+    return ClassificationResult(
+        category_name=TEAM_REGISTRATION_CATEGORY,
+        reply_needed=False,
+        informational_only=False,
+        priority="normal",
+        reason_summary=(
+            "Matched the structured team registration form based on sender, subject marker, "
+            "and required registration fields in the message body."
+        ),
+        rule_code="team_registration_form_v1",
     )
 
 

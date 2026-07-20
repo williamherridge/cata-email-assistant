@@ -22,6 +22,13 @@ CATEGORY_PROFILES = {
         "default_informational_only": True,
         "priority_hint": "low",
     },
+    "team registration submission": {
+        "description": "Structured CATA form submission for a new team registration that needs manual downstream processing.",
+        "default_draft_behavior": "manual_registration_summary",
+        "default_reply_needed": False,
+        "default_informational_only": False,
+        "priority_hint": "normal",
+    },
 }
 
 

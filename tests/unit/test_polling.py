@@ -123,6 +123,57 @@ class FakeReplyToMakeupLineupGmailClient:
         }
 
 
+class FakeTeamRegistrationGmailClient:
+    def __init__(self, _settings):
+        pass
+
+    def get_profile(self):
+        return {"emailAddress": "pilot@cata.test", "historyId": "555"}
+
+    def discover_message_ids(self, _since_history_id):
+        return type("Discovery", (), {"history_id": "555", "message_ids": ["msg-4"]})()
+
+    def get_message(self, _message_id):
+        body = (
+            "New Fall Team Registration from Jamie LayTBD Date 07/19/2026 "
+            "Captain Name Jamie Lay "
+            "Captain USTA Number 11413470 "
+            "Registration Type Closed but Seeking (People can contact you to join your team) "
+            "Phone 863-712-6296 "
+            "Email jameswarnerlay@gmail.com "
+            "Team Name TBD "
+            "Gender/Day Mens Weekend League FALL 18+ "
+            "League NTRP Level of Play 3.5 "
+            "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility) Anderson High School "
+            "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts) Yes"
+        )
+        return {
+            "id": "msg-4",
+            "threadId": "thread-4",
+            "historyId": "555",
+            "internalDate": "1721404800000",
+            "snippet": "New Fall Team Registration from Jamie LayTBD Date 07/19/2026 Captain Name Jamie Lay Captain USTA Number 11413470",
+            "payload": {
+                "mimeType": "multipart/alternative",
+                "headers": [
+                    {"name": "Subject", "value": "New Fall Team Registration from Jamie LayTBD"},
+                    {"name": "From", "value": "CATA <no-reply@austintennis.org>"},
+                    {"name": "To", "value": "pilot@cata.test"},
+                    {"name": "Date", "value": "Sun, 19 Jul 2026 10:00:00 -0500"},
+                    {"name": "Message-Id", "value": "<msg-4@example.com>"},
+                ],
+                "parts": [
+                    {
+                        "mimeType": "text/plain",
+                        "body": {
+                            "data": "TmV3IEZhbGwgVGVhbSBSZWdpc3RyYXRpb24gZnJvbSBKYW1pZSBMYXlUQkQgRGF0ZSAwNy8xOS8yMDI2IENhcHRhaW4gTmFtZSBKYW1pZSBMYXkgQ2FwdGFpbiBVU1RBIE51bWJlciAxMTQxMzQ3MCBSZWdpc3RyYXRpb24gVHlwZSBDbG9zZWQgYnV0IFNlZWtpbmcgKFBlb3BsZSBjYW4gY29udGFjdCB5b3UgdG8gam9pbiB5b3VyIHRlYW0pIFBob25lIDg2My03MTItNjI5NiBFbWFpbCBqYW1lc3dhcm5lcmxheUBnbWFpbC5jb20gVGVhbSBOYW1lIFRCRCBHZW5kZXIvRGF5IE1lbnMgV2Vla2VuZCBMZWFndWUgRkFMTCAxOCsgTGVhZ3VlIE5UUlAgTGV2ZWwgb2YgUGxheSAzLjUgTGVhZ3VlIEhvbWUgQ291cnRzIG9yIEV2ZW50IChkbyBub3Qgc2VsZWN0IGEgZmFjaWxpdHkgdW5sZXNzIHlvdSBoYXZlIEFMUkVBRFkgcmVjZWl2ZWQgcGVybWlzc2lvbiB0byBwbGF5IG91dCBvZiB0aGlzIGZhY2lsaXR5KSBBbmRlcnNvbiBIaWdoIFNjaG9vbCBEbyB5b3UgaGF2ZSBwZXJtaXNzaW9uIHRvIHVzZSB0aGVzZSBjb3VydHM/IChpZiB5b3Ugc2VsZWN0IHllcywgeW91IGFyZSBjb25maXJtaW5nIHRoYXQgeW91IGhhdmUgYWxyZWFkeSByZWNlaXZlZCB3cml0dGVuIHBlcm1pc3Npb24gZnJvbSB0aGlzIGZhY2lsaXR5IHRvIHVzZSB0aGVpciBjb3VydHMpIFllcw=="
+                        },
+                    }
+                ],
+            },
+        }
+
+
 class FakeProfileOnlyGmailClient:
     def __init__(self, _settings):
         pass
@@ -144,7 +195,7 @@ def make_settings(tmp_path: Path):
         json.dumps(
             {
                 "updated_at": "2026-07-20T00:00:00",
-                "categories": [{"name": "Make-up match line up"}],
+                "categories": [{"name": "Make-up match line up"}, {"name": "Team registration submission"}],
             }
         ),
         encoding="utf-8",
@@ -266,3 +317,34 @@ def test_reply_to_makeup_lineup_is_not_auto_classified(monkeypatch, tmp_path):
     message = session.scalar(select(Message).where(Message.gmail_message_id == "msg-3"))
     assert message is not None
     assert message.assigned_category_id is None
+
+
+def test_team_registration_auto_classifies_and_builds_manual_summary(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.commit()
+
+    monkeypatch.setattr(polling, "GmailClient", FakeTeamRegistrationGmailClient)
+
+    polling.poll_mailbox(session, settings, mailbox.id)
+
+    message = session.scalar(select(Message).where(Message.gmail_message_id == "msg-4"))
+    assert message is not None
+    assert message.assigned_category is not None
+    assert message.assigned_category.name == "Team registration submission"
+    assert message.reply_needed is False
+    assert message.informational_only is False
+    assert message.priority == "normal"
+
+    summary_html = polling.build_default_draft_html(message)
+    assert "Manual Processing Summary" in summary_html
+    assert "Jamie Lay" in summary_html
+    assert "11413470" in summary_html
+    assert "Closed but Seeking" in summary_html
+    assert "jameswarnerlay@gmail.com" in summary_html
+    assert "TBD" in summary_html
+    assert "Mens Weekend League FALL 18+" in summary_html
+    assert "3.5" in summary_html
+    assert "Anderson High School" in summary_html

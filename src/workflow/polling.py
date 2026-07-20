@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -694,6 +696,10 @@ def build_reply_subject(message: Message) -> str:
 
 
 def build_default_draft_html(message: Message) -> str:
+    summary_html = build_manual_work_summary_html(message)
+    if summary_html:
+        return summary_html
+
     recipient_name = message.from_display or message.from_address or "there"
     return (
         f"<p>Hello {recipient_name},</p>"
@@ -701,3 +707,77 @@ def build_default_draft_html(message: Message) -> str:
         "<p>Thanks,</p>"
         "<p><strong>CATA Administrator</strong><br>CATA</p>"
     )
+
+
+def build_manual_work_summary_html(message: Message) -> str:
+    category_name = (message.assigned_category.name if message.assigned_category else "").casefold()
+    body_text = read_body_artifact(message)
+
+    if category_name == "team registration submission":
+        registration_fields = parse_team_registration_fields(body_text)
+        if registration_fields:
+            rows = "".join(
+                f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
+                for label, value in registration_fields
+            )
+            return (
+                "<p><strong>Manual Processing Summary</strong></p>"
+                "<p>Use this extracted registration snapshot while batching team-number setup.</p>"
+                "<table>"
+                f"{rows}"
+                "</table>"
+            )
+
+    return ""
+
+
+def parse_team_registration_fields(body_text: str) -> list[tuple[str, str]]:
+    labels = [
+        ("Captain Name", "Captain Name"),
+        ("Captain USTA Number", "Captain USTA Number"),
+        (
+            "Registration Type",
+            "Registration Type",
+        ),
+        ("Captain Email", "Email"),
+        ("Team Name", "Team Name"),
+        ("League", "Gender/Day"),
+        ("Level", "League NTRP Level of Play"),
+        (
+            "Facility",
+            "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+        ),
+    ]
+    extracted: list[tuple[str, str]] = []
+    for output_label, source_label in labels:
+        value = extract_labeled_value(body_text, source_label)
+        if value:
+            extracted.append((output_label, value))
+    return extracted
+
+
+def extract_labeled_value(body_text: str, label: str) -> str | None:
+    all_labels = [
+        "Date",
+        "Captain Name",
+        "Captain USTA Number",
+        "Registration Type",
+        "Phone",
+        "Email",
+        "Team Name",
+        "Gender/Day",
+        "League NTRP Level of Play",
+        "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts)",
+    ]
+    escaped_label = re.escape(label)
+    remaining_labels = [item for item in all_labels if item != label]
+    boundary_pattern = "|".join(re.escape(item) for item in remaining_labels)
+    match = re.search(
+        rf"{escaped_label}\s+(.*?)\s+(?={boundary_pattern}|$)",
+        " ".join(body_text.split()),
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return match.group(1).strip()
