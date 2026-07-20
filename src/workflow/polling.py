@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.gmail_ingest.client import GmailClient
@@ -97,7 +97,14 @@ def list_mailboxes(session: Session) -> list[Mailbox]:
     return list(session.scalars(select(Mailbox).order_by(Mailbox.gmail_address)))
 
 
-def list_queue_messages(session: Session) -> list[Message]:
+def list_queue_messages(
+    session: Session,
+    *,
+    search_text: str | None = None,
+    category_id: int | None = None,
+    priority: str | None = None,
+    reply_needed: str | None = None,
+) -> list[Message]:
     statement = (
         select(Message)
         .where(Message.status == "new")
@@ -106,9 +113,32 @@ def list_queue_messages(session: Session) -> list[Message]:
             selectinload(Message.thread),
             selectinload(Message.participants),
             selectinload(Message.attachments),
+            selectinload(Message.assigned_category),
         )
         .order_by(desc(Message.received_at), desc(Message.id))
     )
+    normalized_search = (search_text or "").strip()
+    if normalized_search:
+        search_pattern = f"%{normalized_search}%"
+        statement = statement.where(
+            or_(
+                Message.subject.ilike(search_pattern),
+                Message.from_display.ilike(search_pattern),
+                Message.from_address.ilike(search_pattern),
+                Message.snippet.ilike(search_pattern),
+            )
+        )
+    if category_id is not None:
+        statement = statement.where(Message.assigned_category_id == category_id)
+    if priority in {"critical", "normal", "low"}:
+        statement = statement.where(Message.priority == priority)
+    if reply_needed == "yes":
+        statement = statement.where(Message.reply_needed.is_(True))
+    elif reply_needed == "no":
+        statement = statement.where(Message.reply_needed.is_(False))
+    elif reply_needed == "unknown":
+        statement = statement.where(Message.reply_needed.is_(None))
+
     messages = list(session.scalars(statement))
     return [message for message in messages if not is_sent_message(message)]
 
@@ -732,13 +762,33 @@ def build_manual_work_summary_html(message: Message) -> str:
 
 
 def parse_team_registration_fields(body_text: str) -> list[tuple[str, str]]:
+    label_aliases = {
+        "Date": ["Date"],
+        "Captain Name": ["Captain Name"],
+        "Captain USTA Number": ["Captain USTA Number"],
+        "Registration Type": ["Registration Type"],
+        "Phone": ["Phone"],
+        "Email": ["Email"],
+        "Team Name": ["Team Name"],
+        "Gender/Day": ["Gender/Day"],
+        "League NTRP Level of Play": ["League NTRP Level of Play"],
+        "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)": [
+            "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+            "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+        ],
+        "Home Courts Contact (the name of the person who has given you written permission to use their courts)": [
+            "Home Courts Contact (the name of the person who has given you written permission to use their courts)"
+        ],
+        "Home Courts Contact Phone": ["Home Courts Contact Phone"],
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts)": [
+            "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts)"
+        ],
+    }
+    parsed = extract_ordered_fields(" ".join(body_text.split()), label_aliases)
     labels = [
         ("Captain Name", "Captain Name"),
         ("Captain USTA Number", "Captain USTA Number"),
-        (
-            "Registration Type",
-            "Registration Type",
-        ),
+        ("Registration Type", "Registration Type"),
         ("Captain Email", "Email"),
         ("Team Name", "Team Name"),
         ("League", "Gender/Day"),
@@ -748,36 +798,24 @@ def parse_team_registration_fields(body_text: str) -> list[tuple[str, str]]:
             "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
         ),
     ]
-    extracted: list[tuple[str, str]] = []
-    for output_label, source_label in labels:
-        value = extract_labeled_value(body_text, source_label)
+    return [(output_label, parsed[source_label]) for output_label, source_label in labels if parsed.get(source_label)]
+
+
+def extract_ordered_fields(body_text: str, label_aliases: dict[str, list[str]]) -> dict[str, str]:
+    found_labels: list[tuple[int, str, str]] = []
+    for canonical_label, aliases in label_aliases.items():
+        for alias in aliases:
+            match = re.search(re.escape(alias), body_text, re.IGNORECASE)
+            if match:
+                found_labels.append((match.start(), canonical_label, alias))
+                break
+
+    found_labels.sort()
+    extracted: dict[str, str] = {}
+    for index, (start, canonical_label, matched_alias) in enumerate(found_labels):
+        value_start = start + len(matched_alias)
+        value_end = found_labels[index + 1][0] if index + 1 < len(found_labels) else len(body_text)
+        value = body_text[value_start:value_end].strip()
         if value:
-            extracted.append((output_label, value))
+            extracted[canonical_label] = value
     return extracted
-
-
-def extract_labeled_value(body_text: str, label: str) -> str | None:
-    all_labels = [
-        "Date",
-        "Captain Name",
-        "Captain USTA Number",
-        "Registration Type",
-        "Phone",
-        "Email",
-        "Team Name",
-        "Gender/Day",
-        "League NTRP Level of Play",
-        "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
-        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts)",
-    ]
-    escaped_label = re.escape(label)
-    remaining_labels = [item for item in all_labels if item != label]
-    boundary_pattern = "|".join(re.escape(item) for item in remaining_labels)
-    match = re.search(
-        rf"{escaped_label}\s+(.*?)\s+(?={boundary_pattern}|$)",
-        " ".join(body_text.split()),
-        re.IGNORECASE,
-    )
-    if not match:
-        return None
-    return match.group(1).strip()

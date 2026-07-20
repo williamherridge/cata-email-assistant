@@ -50,6 +50,46 @@
       {% endif %}
       <div class="notice mobile-only">Tap a message to open the review and drafting screen.</div>
 
+      <form action="/queue" method="get" class="stack" style="margin-bottom: 1rem;">
+        <div class="form-grid" style="grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)) auto; align-items: end;">
+          <label>
+            Search
+            <input type="text" name="search" value="{{ filters.search }}" placeholder="From, subject, or snippet" />
+          </label>
+          <label>
+            Category
+            <select name="category_id">
+              <option value="">All</option>
+              {% for category in categories %}
+                <option value="{{ category.id }}" {% if filters.category_id == category.id|string %}selected{% endif %}>{{ category.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Priority
+            <select name="priority">
+              <option value="">All</option>
+              {% for option in ["critical", "normal", "low"] %}
+                <option value="{{ option }}" {% if filters.priority == option %}selected{% endif %}>{{ option|title }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Reply Needed
+            <select name="reply_needed">
+              <option value="">All</option>
+              <option value="yes" {% if filters.reply_needed == "yes" %}selected{% endif %}>Yes</option>
+              <option value="no" {% if filters.reply_needed == "no" %}selected{% endif %}>No</option>
+              <option value="unknown" {% if filters.reply_needed == "unknown" %}selected{% endif %}>Unknown</option>
+            </select>
+          </label>
+          <div class="button-row">
+            <button type="submit">Apply</button>
+            <a href="/queue" class="link-button">Clear</a>
+          </div>
+        </div>
+      </form>
+
       <div class="queue-column-head">
         <span></span>
         <span>From</span>
@@ -61,9 +101,14 @@
       {% if messages %}
         <div class="queue-list">
           {% for message in messages %}
+            {% if filter_query %}
+              {% set row_href = "/queue?selected_message_id=" ~ message.id ~ "&" ~ filter_query %}
+            {% else %}
+              {% set row_href = "/queue?selected_message_id=" ~ message.id %}
+            {% endif %}
             <a
-              href="/queue?selected_message_id={{ message.id }}"
-              data-desktop-href="/queue?selected_message_id={{ message.id }}"
+              href="{{ row_href }}"
+              data-desktop-href="{{ row_href }}"
               data-mobile-href="/messages/{{ message.id }}"
               class="queue-row {% if selected_message_id == message.id %}selected{% endif %}"
             >
@@ -140,11 +185,27 @@
               </label>
               <label>
                 Category
-                <input type="text" name="proposed_category_label" value="{{ selected_message.proposed_category_label or '' }}" />
+                <select name="assigned_category_id">
+                  <option value="">Unassigned</option>
+                  {% for category in categories %}
+                    <option
+                      value="{{ category.id }}"
+                      {% if selected_message.assigned_category_id == category.id %}selected{% endif %}
+                    >{{ category.name }}</option>
+                  {% endfor %}
+                </select>
               </label>
               <label>
                 Subcategory
-                <input type="text" name="proposed_subcategory_label" value="{{ selected_message.proposed_subcategory_label or '' }}" />
+                <select name="assigned_subcategory_id">
+                  <option value="">None</option>
+                  {% for subcategory in subcategories %}
+                    <option
+                      value="{{ subcategory.id }}"
+                      {% if selected_message.assigned_subcategory_id == subcategory.id %}selected{% endif %}
+                    >{{ subcategory.name }}</option>
+                  {% endfor %}
+                </select>
               </label>
               <label>
                 Priority

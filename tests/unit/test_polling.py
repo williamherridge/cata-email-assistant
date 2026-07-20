@@ -348,3 +348,51 @@ def test_team_registration_auto_classifies_and_builds_manual_summary(monkeypatch
     assert "Mens Weekend League FALL 18+" in summary_html
     assert "3.5" in summary_html
     assert "Anderson High School" in summary_html
+
+
+def test_parse_team_registration_fields_handles_home_courts_contact_variants():
+    body_text = (
+        "New Fall Team Registration from Adeena ReitbergerAll Set! Date 07/19/2026 "
+        "Captain Name Adeena Reitberger "
+        "Captain USTA Number 2019129126 "
+        "Registration Type Closed Team (only those you give team number to can join) "
+        "Phone 2408886800 "
+        "Email adeena@gmail.com "
+        "Team Name All Set! "
+        "Gender/Day Womens WeekEND League FALL 18+ League "
+        "League NTRP Level of Play 3.0 League "
+        "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility) "
+        "UT Whitaker "
+        "Home Courts Contact (the name of the person who has given you written permission to use their courts) Casey Herridge "
+        "Home Courts Contact Phone 512-443-1342 "
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts) Yes"
+    )
+
+    parsed = dict(polling.parse_team_registration_fields(body_text))
+
+    assert parsed["Level"] == "3.0"
+    assert parsed["Facility"] == "UT Whitaker"
+
+
+def test_parse_team_registration_fields_handles_mixed_level_and_facility():
+    body_text = (
+        "New Fall Team Registration from Gabrielle JamesBalls & Boujee Date 07/19/2026 "
+        "Captain Name Gabrielle James "
+        "Captain USTA Number 2010818963 "
+        "Registration Type Closed Team (only those you give team number to can join) "
+        "Phone 5125845075 "
+        "Email spydergab@gmail.com "
+        "Team Name Balls & Boujee "
+        "Gender/Day Mixed League FALL 18+ Mixed "
+        "League NTRP Level of Play Mixed 8.0 "
+        "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility) "
+        "Westlake Country Club "
+        "Home Courts Contact (the name of the person who has given you written permission to use their courts) Steve "
+        "Home Courts Contact Phone 512-892-0173 "
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts) Yes"
+    )
+
+    parsed = dict(polling.parse_team_registration_fields(body_text))
+
+    assert parsed["Level"] == "Mixed 8.0"
+    assert parsed["Facility"] == "Westlake Country Club"

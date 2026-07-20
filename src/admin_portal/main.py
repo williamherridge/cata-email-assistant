@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from urllib.parse import urlencode
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -59,6 +60,17 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="CATA Email Assistant", lifespan=lifespan)
 
 
+def build_queue_return_path(selected_id: int | None, filter_query: str) -> str:
+    parts: list[str] = []
+    if selected_id:
+        parts.append(f"selected_message_id={selected_id}")
+    if filter_query:
+        parts.append(filter_query)
+    if not parts:
+        return "/queue"
+    return f"/queue?{'&'.join(parts)}"
+
+
 @app.get("/health")
 def healthcheck() -> dict:
     return {"status": "ok", "app_env": settings.app_env}
@@ -73,10 +85,28 @@ def root() -> RedirectResponse:
 def queue_page(request: Request, db: Session = Depends(get_db_session)):
     ensure_default_mailbox(db, settings)
     sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
-    messages = list_queue_messages(db)
+    search_text = (request.query_params.get("search") or "").strip()
+    category_raw = request.query_params.get("category_id") or ""
+    category_id = int(category_raw) if category_raw.isdigit() else None
+    priority = (request.query_params.get("priority") or "").strip().lower()
+    reply_needed = (request.query_params.get("reply_needed") or "").strip().lower()
+    messages = list_queue_messages(
+        db,
+        search_text=search_text,
+        category_id=category_id,
+        priority=priority,
+        reply_needed=reply_needed,
+    )
     selected_message = None
     selected_message_id = request.query_params.get("selected_message_id")
     selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
+    filter_params = {
+        "search": search_text,
+        "category_id": category_raw,
+        "priority": priority,
+        "reply_needed": reply_needed,
+    }
+    filter_query = urlencode({key: value for key, value in filter_params.items() if value})
     if messages:
         available_ids = {message.id for message in messages}
         if selected_id not in available_ids:
@@ -102,9 +132,16 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
             "reply_subject": build_reply_subject(selected_message) if selected_message else "",
             "draft_html": build_default_draft_html(selected_message) if selected_message else "",
             "selected_body_text": read_body_artifact(selected_message) if selected_message else "",
-            "return_to_queue": f"/queue?selected_message_id={selected_id}" if selected_id else "/queue",
+            "return_to_queue": build_queue_return_path(selected_id, filter_query),
             "categories": list_active_categories(db),
             "subcategories": list_active_subcategories(db),
+            "filters": {
+                "search": search_text,
+                "category_id": category_raw,
+                "priority": priority,
+                "reply_needed": reply_needed,
+            },
+            "filter_query": filter_query,
         },
     )
 

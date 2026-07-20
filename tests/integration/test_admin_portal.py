@@ -40,6 +40,7 @@ def test_queue_and_message_detail_render(tmp_path):
         draft_state="not_started",
         priority="normal",
         informational_only=False,
+        assigned_category_id=None,
     )
     session.add(message)
     session.flush()
@@ -51,6 +52,8 @@ def test_queue_and_message_detail_render(tmp_path):
     subcategory = Subcategory(category_id=category.id, name="League signup", is_active=True)
     session.add(subcategory)
     session.flush()
+    message.assigned_category_id = category.id
+    message.assigned_subcategory_id = subcategory.id
 
     sent_message = Message(
         mailbox_id=mailbox.id,
@@ -113,6 +116,15 @@ def test_queue_and_message_detail_render(tmp_path):
         assert "Reply Draft" in queue_response.text
         assert "Original Email" in queue_response.text
         assert "Full Detail" in queue_response.text
+
+        filtered_search_response = client.get("/queue?search=Registration")
+        assert filtered_search_response.status_code == 200
+        assert "Registration question" in filtered_search_response.text
+        assert "Apply" in filtered_search_response.text
+
+        filtered_category_response = client.get(f"/queue?category_id={category.id}")
+        assert filtered_category_response.status_code == 200
+        assert "Registration question" in filtered_category_response.text
 
         poll_runs_response = client.get("/poll-runs")
         assert poll_runs_response.status_code == 200

@@ -10,6 +10,10 @@ MAKEUP_LINEUP_CATEGORY = "Make-up match line up"
 TEAM_REGISTRATION_CATEGORY = "Team registration submission"
 REPLY_PREFIXES = ("re:", "fw:", "fwd:")
 MAKEUP_LINEUP_SUBJECT_PREFIX = "make-up match line up from"
+TEAM_REGISTRATION_SENDERS = {
+    "no-reply@austintennis.org",
+    "leaguecommittee@austintennis.org",
+}
 TEAM_REGISTRATION_SUBJECT_MARKERS = (
     "team registration from",
     "new spring team registration from",
@@ -85,7 +89,7 @@ def classify_team_registration_submission(message: Message, body_text: str) -> C
     subject = (message.subject or "").strip()
     subject_lower = subject.casefold()
 
-    if from_address != "no-reply@austintennis.org":
+    if from_address not in TEAM_REGISTRATION_SENDERS:
         return None
     if subject_lower.startswith(REPLY_PREFIXES):
         return None

@@ -35,10 +35,10 @@
         </div>
         <div class="muted">Informational Only</div>
         <div>{{ "Yes" if message.informational_only else "No" }}</div>
-        <div class="muted">Proposed Category</div>
-        <div>{{ message.proposed_category_label or "Not set" }}</div>
-        <div class="muted">Proposed Subcategory</div>
-        <div>{{ message.proposed_subcategory_label or "Not set" }}</div>
+        <div class="muted">Category</div>
+        <div>{{ message.assigned_category.name if message.assigned_category else "Not set" }}</div>
+        <div class="muted">Subcategory</div>
+        <div>{{ message.assigned_subcategory.name if message.assigned_subcategory else "Not set" }}</div>
         <div class="muted">Gmail Thread</div>
         <div>
           {% if message.thread %}
@@ -78,13 +78,23 @@
         </label>
 
         <label>
-          Proposed Category
-          <input type="text" name="proposed_category_label" value="{{ message.proposed_category_label or '' }}" />
+          Category
+          <select name="assigned_category_id">
+            <option value="">Unassigned</option>
+            {% for category in categories %}
+              <option value="{{ category.id }}" {% if message.assigned_category_id == category.id %}selected{% endif %}>{{ category.name }}</option>
+            {% endfor %}
+          </select>
         </label>
 
         <label>
-          Proposed Subcategory
-          <input type="text" name="proposed_subcategory_label" value="{{ message.proposed_subcategory_label or '' }}" />
+          Subcategory
+          <select name="assigned_subcategory_id">
+            <option value="">None</option>
+            {% for subcategory in subcategories %}
+              <option value="{{ subcategory.id }}" {% if message.assigned_subcategory_id == subcategory.id %}selected{% endif %}>{{ subcategory.name }}</option>
+            {% endfor %}
+          </select>
         </label>
 
         <div class="button-row">
