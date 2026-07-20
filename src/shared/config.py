@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_PATH = REPO_ROOT / "data" / "processed" / "app" / "cata_email_assistant.db"
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / "data" / "processed" / "artifacts"
 DEFAULT_TEMPLATES_DIR = REPO_ROOT / "src" / "admin_portal" / "templates"
+DEFAULT_TAXONOMY_CATALOG_PATH = REPO_ROOT / "data" / "analytics" / "taxonomy_catalog.json"
 
 
 class Settings(BaseSettings):
@@ -35,6 +36,10 @@ class Settings(BaseSettings):
     )
     artifact_root: Path = Field(default=DEFAULT_ARTIFACT_ROOT, alias="ARTIFACT_ROOT")
     templates_dir: Path = Field(default=DEFAULT_TEMPLATES_DIR, alias="TEMPLATES_DIR")
+    taxonomy_catalog_path: Path = Field(
+        default=DEFAULT_TAXONOMY_CATALOG_PATH,
+        alias="TAXONOMY_CATALOG_PATH",
+    )
 
     default_gmail_address: str | None = Field(default=None, alias="DEFAULT_GMAIL_ADDRESS")
     default_gmail_display_name: str = Field(default="CATA Inbox", alias="DEFAULT_GMAIL_DISPLAY_NAME")

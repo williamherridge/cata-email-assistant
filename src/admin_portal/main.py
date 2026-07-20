@@ -17,6 +17,7 @@ from src.admin_portal.formatting import (
 )
 from src.shared.config import get_settings
 from src.shared.database import get_db_session
+from src.workflow.taxonomy import list_active_categories, list_active_subcategories, sync_taxonomy_catalog
 from src.workflow.polling import (
     build_default_draft_html,
     build_reply_subject,
@@ -71,6 +72,7 @@ def root() -> RedirectResponse:
 @app.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request, db: Session = Depends(get_db_session)):
     ensure_default_mailbox(db, settings)
+    sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
     messages = list_queue_messages(db)
     selected_message = None
     selected_message_id = request.query_params.get("selected_message_id")
@@ -101,6 +103,8 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
             "draft_html": build_default_draft_html(selected_message) if selected_message else "",
             "selected_body_text": read_body_artifact(selected_message) if selected_message else "",
             "return_to_queue": f"/queue?selected_message_id={selected_id}" if selected_id else "/queue",
+            "categories": list_active_categories(db),
+            "subcategories": list_active_subcategories(db),
         },
     )
 
@@ -120,6 +124,7 @@ def poll_runs_page(request: Request, db: Session = Depends(get_db_session)):
 
 @app.get("/messages/{message_id}", response_class=HTMLResponse)
 def message_detail_page(message_id: int, request: Request, db: Session = Depends(get_db_session)):
+    sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
     message = get_message_detail(db, message_id)
     if message is None:
         raise HTTPException(status_code=404, detail="Message not found.")
@@ -133,6 +138,8 @@ def message_detail_page(message_id: int, request: Request, db: Session = Depends
             "message": message,
             "body_text": read_body_artifact(message),
             "saved": request.query_params.get("saved") == "1",
+            "categories": list_active_categories(db),
+            "subcategories": list_active_subcategories(db),
         },
     )
 

@@ -25,6 +25,7 @@ from src.gmail_ingest.parsing import (
 from src.shared.config import Settings
 from src.shared.models import (
     AuditEvent,
+    Category,
     Mailbox,
     Message,
     MessageArtifact,
@@ -33,6 +34,7 @@ from src.shared.models import (
     MessageParticipant,
     MessageThread,
     PollRun,
+    Subcategory,
     WorkItem,
 )
 
@@ -119,6 +121,9 @@ def get_message_detail(session: Session, message_id: int) -> Message | None:
             selectinload(Message.headers),
             selectinload(Message.artifacts),
             selectinload(Message.audit_events),
+            selectinload(Message.assigned_category),
+            selectinload(Message.assigned_subcategory),
+            selectinload(Message.topics),
         )
     )
     return session.scalar(statement)
@@ -136,8 +141,8 @@ def update_message_review(
     priority: str,
     informational_only: bool,
     reply_needed: bool | None,
-    proposed_category_label: str | None,
-    proposed_subcategory_label: str | None,
+    assigned_category_id: int | None,
+    assigned_subcategory_id: int | None,
 ) -> Message:
     message = session.get(Message, message_id)
     if message is None:
@@ -145,12 +150,22 @@ def update_message_review(
 
     changes: dict[str, dict[str, object | None]] = {}
     normalized_priority = normalize_priority(priority)
+    category = session.get(Category, assigned_category_id) if assigned_category_id else None
+    if assigned_category_id and (category is None or not category.is_active):
+        raise ValueError("The selected category is not active.")
+
+    subcategory = session.get(Subcategory, assigned_subcategory_id) if assigned_subcategory_id else None
+    if assigned_subcategory_id and (
+        subcategory is None or not subcategory.is_active or subcategory.category_id != assigned_category_id
+    ):
+        raise ValueError("The selected subcategory does not belong to the selected category.")
+
     updates = {
         "priority": normalized_priority,
         "informational_only": informational_only,
         "reply_needed": reply_needed,
-        "proposed_category_label": proposed_category_label,
-        "proposed_subcategory_label": proposed_subcategory_label,
+        "assigned_category_id": assigned_category_id,
+        "assigned_subcategory_id": assigned_subcategory_id,
     }
     for field_name, new_value in updates.items():
         old_value = getattr(message, field_name)
@@ -515,8 +530,8 @@ def parse_review_form(body: bytes) -> dict[str, object]:
         "priority": priority,
         "informational_only": "informational_only" in parsed,
         "reply_needed": reply_needed,
-        "proposed_category_label": normalize_optional_text(parsed.get("proposed_category_label", [""])[0]),
-        "proposed_subcategory_label": normalize_optional_text(parsed.get("proposed_subcategory_label", [""])[0]),
+        "assigned_category_id": normalize_optional_int(parsed.get("assigned_category_id", [""])[0]),
+        "assigned_subcategory_id": normalize_optional_int(parsed.get("assigned_subcategory_id", [""])[0]),
     }
 
 
@@ -534,6 +549,13 @@ def normalize_optional_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def normalize_optional_int(value: str | None) -> int | None:
+    normalized = normalize_optional_text(value)
+    if normalized is None:
+        return None
+    return int(normalized) if normalized.isdigit() else None
 
 
 def normalize_priority(value: str | None) -> str:

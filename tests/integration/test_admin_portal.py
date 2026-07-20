@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from src.admin_portal.main import app
 from src.shared.database import Base, get_db_session
-from src.shared.models import AuditEvent, Mailbox, Message, MessageArtifact, MessageThread
+from src.shared.models import AuditEvent, Category, Mailbox, Message, MessageArtifact, MessageThread, Subcategory
 
 
 def test_queue_and_message_detail_render(tmp_path):
@@ -42,6 +42,14 @@ def test_queue_and_message_detail_render(tmp_path):
         informational_only=False,
     )
     session.add(message)
+    session.flush()
+
+    category = Category(name="Registration", is_active=True)
+    session.add(category)
+    session.flush()
+
+    subcategory = Subcategory(category_id=category.id, name="League signup", is_active=True)
+    session.add(subcategory)
     session.flush()
 
     sent_message = Message(
@@ -122,8 +130,8 @@ def test_queue_and_message_detail_render(tmp_path):
                 "priority": "critical",
                 "reply_needed": "yes",
                 "informational_only": "1",
-                "proposed_category_label": "Registration",
-                "proposed_subcategory_label": "League signup",
+                "assigned_category_id": str(category.id),
+                "assigned_subcategory_id": str(subcategory.id),
             },
             follow_redirects=True,
         )
@@ -136,8 +144,8 @@ def test_queue_and_message_detail_render(tmp_path):
         assert refreshed.priority == "critical"
         assert refreshed.reply_needed is True
         assert refreshed.informational_only is True
-        assert refreshed.proposed_category_label == "Registration"
-        assert refreshed.proposed_subcategory_label == "League signup"
+        assert refreshed.assigned_category_id == category.id
+        assert refreshed.assigned_subcategory_id == subcategory.id
 
         event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
         assert "message_review_updated" in event_types

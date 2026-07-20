@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database import Base
@@ -12,6 +12,14 @@ from src.shared.database import Base
 
 def utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+message_topics = Table(
+    "message_topics",
+    Base.metadata,
+    Column("message_id", ForeignKey("messages.id"), primary_key=True),
+    Column("topic_id", ForeignKey("topics.id"), primary_key=True),
+)
 
 
 class User(Base):
@@ -104,8 +112,8 @@ class Message(Base):
     priority: Mapped[str] = mapped_column(Text, nullable=False, default="normal")
     informational_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reply_needed: Mapped[bool | None] = mapped_column(Boolean)
-    assigned_category_id: Mapped[int | None] = mapped_column(Integer)
-    assigned_subcategory_id: Mapped[int | None] = mapped_column(Integer)
+    assigned_category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"))
+    assigned_subcategory_id: Mapped[int | None] = mapped_column(ForeignKey("subcategories.id"))
     proposed_category_label: Mapped[str | None] = mapped_column(Text)
     proposed_subcategory_label: Mapped[str | None] = mapped_column(Text)
     latest_analysis_id: Mapped[int | None] = mapped_column(Integer)
@@ -126,6 +134,54 @@ class Message(Base):
     artifacts: Mapped[list[MessageArtifact]] = relationship(back_populates="message", cascade="all, delete-orphan")
     work_items: Mapped[list[WorkItem]] = relationship(back_populates="message")
     audit_events: Mapped[list[AuditEvent]] = relationship(back_populates="message")
+    assigned_category: Mapped[Category | None] = relationship(foreign_keys=[assigned_category_id])
+    assigned_subcategory: Mapped[Subcategory | None] = relationship(foreign_keys=[assigned_subcategory_id])
+    topics: Mapped[list[Topic]] = relationship(secondary=message_topics, back_populates="messages")
+
+
+class Category(Base):
+    __tablename__ = "categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    default_draft_behavior: Mapped[str | None] = mapped_column(Text)
+    default_reply_needed: Mapped[bool | None] = mapped_column(Boolean)
+    default_informational_only: Mapped[bool | None] = mapped_column(Boolean)
+    priority_hint: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    subcategories: Mapped[list[Subcategory]] = relationship(back_populates="category", cascade="all, delete-orphan")
+
+
+class Subcategory(Base):
+    __tablename__ = "subcategories"
+    __table_args__ = (UniqueConstraint("category_id", "name", name="uq_subcategories_category_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    category: Mapped[Category] = relationship(back_populates="subcategories")
+
+
+class Topic(Base):
+    __tablename__ = "topics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    messages: Mapped[list[Message]] = relationship(secondary=message_topics, back_populates="topics")
 
 
 class WorkItem(Base):
