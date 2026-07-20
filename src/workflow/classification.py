@@ -52,8 +52,8 @@ def classify_makeup_match_lineup(message: Message, body_text: str) -> Classifica
     return ClassificationResult(
         category_name=MAKEUP_LINEUP_CATEGORY,
         reply_needed=False,
-        informational_only=False,
-        priority="normal",
+        informational_only=True,
+        priority="low",
         reason_summary=(
             "Matched the structured make-up match line-up form based on sender, subject prefix, "
             "and required body markers."

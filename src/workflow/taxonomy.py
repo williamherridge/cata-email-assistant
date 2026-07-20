@@ -17,10 +17,10 @@ CATEGORY_NAME_NORMALIZATION = {
 CATEGORY_PROFILES = {
     "make-up match line up": {
         "description": "Structured CATA form submission that captures a make-up match lineup.",
-        "default_draft_behavior": "manual_processing",
+        "default_draft_behavior": "auto_ignore_candidate",
         "default_reply_needed": False,
-        "default_informational_only": False,
-        "priority_hint": "normal",
+        "default_informational_only": True,
+        "priority_hint": "low",
     },
 }
 

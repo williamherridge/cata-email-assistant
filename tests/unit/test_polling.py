@@ -241,15 +241,15 @@ def test_poll_mailbox_auto_classifies_makeup_lineup(monkeypatch, tmp_path):
     assert message.assigned_category is not None
     assert message.assigned_category.name == "Make-up match line up"
     assert message.reply_needed is False
-    assert message.informational_only is False
-    assert message.priority == "normal"
+    assert message.informational_only is True
+    assert message.priority == "low"
 
     category = session.scalar(select(Category).where(Category.name == "Make-up match line up"))
     assert category is not None
-    assert category.default_draft_behavior == "manual_processing"
+    assert category.default_draft_behavior == "auto_ignore_candidate"
     assert category.default_reply_needed is False
-    assert category.default_informational_only is False
-    assert category.priority_hint == "normal"
+    assert category.default_informational_only is True
+    assert category.priority_hint == "low"
 
 
 def test_reply_to_makeup_lineup_is_not_auto_classified(monkeypatch, tmp_path):
