@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-06-03T14:57:43",
+  "updated_at": "2026-07-20T00:00:00",
   "categories": [
     {
       "name": "Add/change co-captain",
@@ -32,23 +32,11 @@
     {
       "name": "Ineligible player",
       "parent_group": "",
-      "aliases": [],
+      "aliases": [
+        "Ineligible player for sectionals notification"
+      ],
       "subcategories": [],
-      "usage_count": 3
-    },
-    {
-      "name": "Ineligible player for sectionals notification",
-      "parent_group": "",
-      "aliases": [],
-      "subcategories": [],
-      "usage_count": 6
-    },
-    {
-      "name": "Informational only",
-      "parent_group": "",
-      "aliases": [],
-      "subcategories": [],
-      "usage_count": 18
+      "usage_count": 9
     },
     {
       "name": "Looking for team",

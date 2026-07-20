@@ -10,25 +10,46 @@ from sqlalchemy.orm import Session
 
 from src.shared.models import Category, Subcategory, Topic
 
+EXCLUDED_CATEGORY_NAMES = {"informational only"}
+CATEGORY_NAME_NORMALIZATION = {
+    "ineligible player for sectionals notification": "Ineligible player",
+}
+
+
+def normalize_catalog_category_name(name: str) -> str | None:
+    normalized = name.strip()
+    if not normalized:
+        return None
+    if normalized.casefold() in EXCLUDED_CATEGORY_NAMES:
+        return None
+    return CATEGORY_NAME_NORMALIZATION.get(normalized.casefold(), normalized)
+
 
 def sync_taxonomy_catalog(session: Session, catalog_path: Path) -> int:
-    """Add approved catalog labels without deleting or renaming database records."""
+    """Add approved catalog labels and deactivate excluded legacy labels."""
     if not catalog_path.exists():
         return 0
 
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     existing = {name.casefold() for name in session.scalars(select(Category.name))}
     added = 0
+    changed = False
+
+    for category in session.scalars(select(Category).where(Category.is_active.is_(True))):
+        if normalize_catalog_category_name(category.name) is None:
+            category.is_active = False
+            changed = True
 
     for entry in catalog.get("categories", []):
-        name = str(entry.get("name", "")).strip()
+        raw_name = str(entry.get("name", ""))
+        name = normalize_catalog_category_name(raw_name)
         if not name or name.casefold() in existing:
             continue
         session.add(Category(name=name, is_active=True))
         existing.add(name.casefold())
         added += 1
 
-    if added:
+    if added or changed:
         session.commit()
     return added
 
