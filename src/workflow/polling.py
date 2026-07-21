@@ -53,6 +53,7 @@ SENT_REPLY_HTML_ARTIFACT = "sent_reply_html"
 SENT_REPLY_METADATA_ARTIFACT = "sent_reply_metadata"
 DEFAULT_SIGNATURE_LOGO_PATH = Path("src/admin_portal/static/images/tennis-austin-full-logo")
 logger = logging.getLogger(__name__)
+_DEFAULT_SIGNATURE_LOGO_HTML: str | None = None
 
 
 def utcnow() -> datetime:
@@ -83,6 +84,11 @@ def ensure_runtime_directories(settings: Settings) -> None:
 def ensure_default_mailbox(session: Session, settings: Settings) -> Mailbox | None:
     mailbox_address = settings.default_gmail_address
     display_name = settings.default_gmail_display_name
+
+    if not mailbox_address:
+        existing_mailbox = session.scalar(select(Mailbox).where(Mailbox.is_active.is_(True)).order_by(Mailbox.id))
+        if existing_mailbox is not None:
+            return existing_mailbox
 
     if not mailbox_address:
         try:
@@ -134,13 +140,6 @@ def list_queue_messages(
     statement = (
         select(Message)
         .where(Message.status == "new")
-        .options(
-            selectinload(Message.mailbox),
-            selectinload(Message.thread),
-            selectinload(Message.participants),
-            selectinload(Message.attachments),
-            selectinload(Message.assigned_category),
-        )
         .order_by(desc(Message.received_at), desc(Message.id))
     )
     normalized_search = (search_text or "").strip()
@@ -214,10 +213,33 @@ def list_history_messages(
 
 
 def get_message_detail(session: Session, message_id: int) -> Message | None:
-    statement = (
-        select(Message)
-        .where(Message.id == message_id)
-        .options(
+    return get_message_detail_for_view(session, message_id, view="full")
+
+
+def get_message_detail_for_view(session: Session, message_id: int, *, view: str = "full") -> Message | None:
+    if view == "queue":
+        options = [
+            selectinload(Message.mailbox),
+            selectinload(Message.thread),
+            selectinload(Message.participants),
+            selectinload(Message.attachments),
+            selectinload(Message.artifacts),
+            selectinload(Message.assigned_category),
+            selectinload(Message.assigned_subcategory),
+        ]
+    elif view == "history":
+        options = [
+            selectinload(Message.mailbox),
+            selectinload(Message.thread),
+            selectinload(Message.participants),
+            selectinload(Message.attachments),
+            selectinload(Message.artifacts),
+            selectinload(Message.audit_events),
+            selectinload(Message.assigned_category),
+            selectinload(Message.assigned_subcategory),
+        ]
+    else:
+        options = [
             selectinload(Message.mailbox),
             selectinload(Message.thread),
             selectinload(Message.participants),
@@ -228,7 +250,12 @@ def get_message_detail(session: Session, message_id: int) -> Message | None:
             selectinload(Message.assigned_category),
             selectinload(Message.assigned_subcategory),
             selectinload(Message.topics),
-        )
+        ]
+
+    statement = (
+        select(Message)
+        .where(Message.id == message_id)
+        .options(*options)
     )
     return session.scalar(statement)
 
@@ -1082,7 +1109,12 @@ def read_body_html_artifact(message: Message) -> str:
     return sanitize_email_html(extract_body_html(payload))
 
 
-def read_sent_reply_records(message: Message, settings: Settings | None = None) -> list[SentReplyRecord]:
+def read_sent_reply_records(
+    message: Message,
+    settings: Settings | None = None,
+    *,
+    allow_gmail_fallback: bool = True,
+) -> list[SentReplyRecord]:
     html_artifacts = sorted(
         (artifact for artifact in message.artifacts if artifact.artifact_type == SENT_REPLY_HTML_ARTIFACT),
         key=lambda artifact: (artifact.created_at or datetime.min),
@@ -1112,7 +1144,7 @@ def read_sent_reply_records(message: Message, settings: Settings | None = None) 
             continue
         metadata = metadata_by_path.get(path.stem, {})
         records.append(SentReplyRecord(html=html_value, metadata=metadata, created_at=artifact.created_at))
-    if records or settings is None:
+    if records or settings is None or not allow_gmail_fallback:
         return records
 
     fallback_record = fetch_latest_sent_reply_from_gmail(message, settings)
@@ -1457,13 +1489,18 @@ def build_default_draft_html(message: Message) -> str:
 
 
 def build_default_signature_logo_html() -> str:
+    global _DEFAULT_SIGNATURE_LOGO_HTML
+    if _DEFAULT_SIGNATURE_LOGO_HTML is not None:
+        return _DEFAULT_SIGNATURE_LOGO_HTML
     if not DEFAULT_SIGNATURE_LOGO_PATH.exists():
+        _DEFAULT_SIGNATURE_LOGO_HTML = ""
         return ""
     try:
         encoded = base64.b64encode(DEFAULT_SIGNATURE_LOGO_PATH.read_bytes()).decode("ascii")
     except OSError:
+        _DEFAULT_SIGNATURE_LOGO_HTML = ""
         return ""
-    return (
+    _DEFAULT_SIGNATURE_LOGO_HTML = (
         '<div style="margin-top: 4px;">'
         '<img '
         f'src="data:image/webp;base64,{encoded}" '
@@ -1471,6 +1508,7 @@ def build_default_signature_logo_html() -> str:
         'style="display: block; width: 180px; height: auto;">'
         "</div>"
     )
+    return _DEFAULT_SIGNATURE_LOGO_HTML
 
 
 def build_outbound_reply_html(

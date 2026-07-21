@@ -27,6 +27,7 @@ from src.workflow.polling import (
     ensure_default_mailbox,
     ensure_runtime_directories,
     get_message_detail,
+    get_message_detail_for_view,
     get_ignore_source,
     get_reply_cc_addresses,
     get_reply_to_addresses,
@@ -230,7 +231,7 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
             available_ids = {message.id for message in messages}
             if selected_id not in available_ids:
                 selected_id = messages[0].id
-            selected_message = get_message_detail(db, selected_id)
+            selected_message = get_message_detail_for_view(db, selected_id, view="queue")
             if selected_message is not None:
                 mark_message_opened(db, selected_message)
         return templates.TemplateResponse(
@@ -247,7 +248,7 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
                 reply_cc_addresses=get_reply_cc_addresses(selected_message) if selected_message else "",
                 reply_subject=build_reply_subject(selected_message) if selected_message else "",
                 draft_html=build_default_draft_html(selected_message) if selected_message else "",
-                selected_sent_reply_records=read_sent_reply_records(selected_message, settings) if selected_message else [],
+                selected_sent_reply_records=read_sent_reply_records(selected_message) if selected_message else [],
                 selected_has_prior_reply=has_prior_sent_reply(selected_message) if selected_message else False,
                 selected_body_text=read_body_artifact(selected_message) if selected_message else "",
                 selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
@@ -300,7 +301,7 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
             available_ids = {message.id for message in messages}
             if selected_id not in available_ids:
                 selected_id = messages[0].id
-            selected_message = get_message_detail(db, selected_id)
+            selected_message = get_message_detail_for_view(db, selected_id, view="history")
         return templates.TemplateResponse(
             request,
             name="history.html",
@@ -313,7 +314,7 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
                 search=search_text,
                 ignored_scope=ignored_scope,
                 return_to_history=f"/history?{filter_query}" if filter_query else "/history",
-                sent_reply_records=read_sent_reply_records(selected_message, settings) if selected_message else [],
+                sent_reply_records=read_sent_reply_records(selected_message) if selected_message else [],
                 selected_body_text=read_body_artifact(selected_message) if selected_message else "",
                 selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
                 selected_ignore_source=get_ignore_source(selected_message) if selected_message else "",
@@ -383,7 +384,7 @@ def message_detail_page(message_id: int, request: Request, db: Session = Depends
                 "page_error": resolve_page_error(request.query_params.get("error")),
                 "categories": list_active_categories(db),
                 "subcategories": list_active_subcategories(db),
-                "sent_reply_records": read_sent_reply_records(message, settings),
+                "sent_reply_records": read_sent_reply_records(message),
             },
         )
     except HTTPException:

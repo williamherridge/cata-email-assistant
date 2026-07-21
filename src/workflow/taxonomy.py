@@ -32,6 +32,7 @@ CATEGORY_PROFILES = {
     },
 }
 logger = logging.getLogger(__name__)
+_SYNC_STATE: dict[str, tuple[int, int]] = {}
 
 
 def normalize_catalog_category_name(name: str) -> str | None:
@@ -59,6 +60,17 @@ def apply_category_profile(category: Category) -> bool:
 def sync_taxonomy_catalog(session: Session, catalog_path: Path) -> int:
     """Add approved catalog labels and deactivate excluded legacy labels."""
     if not catalog_path.exists():
+        return 0
+
+    try:
+        stat = catalog_path.stat()
+    except OSError:
+        logger.exception("Taxonomy catalog could not be inspected at %s.", catalog_path)
+        return 0
+
+    cache_key = str(catalog_path.resolve())
+    state = (stat.st_mtime_ns, stat.st_size)
+    if _SYNC_STATE.get(cache_key) == state:
         return 0
 
     try:
@@ -90,6 +102,7 @@ def sync_taxonomy_catalog(session: Session, catalog_path: Path) -> int:
 
     if added or changed:
         session.commit()
+    _SYNC_STATE[cache_key] = state
     return added
 
 

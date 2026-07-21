@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Table, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database import Base
@@ -92,7 +92,15 @@ class MessageThread(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    __table_args__ = (UniqueConstraint("mailbox_id", "gmail_message_id", name="uq_messages_mailbox_message"),)
+    __table_args__ = (
+        UniqueConstraint("mailbox_id", "gmail_message_id", name="uq_messages_mailbox_message"),
+        Index("ix_messages_status_received_id", "status", "received_at", "id"),
+        Index("ix_messages_status_responded_id", "status", "responded_at", "id"),
+        Index("ix_messages_status_ignored_id", "status", "ignored_at", "id"),
+        Index("ix_messages_assigned_category_id", "assigned_category_id"),
+        Index("ix_messages_priority", "priority"),
+        Index("ix_messages_reply_needed", "reply_needed"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     mailbox_id: Mapped[int] = mapped_column(ForeignKey("mailboxes.id"), nullable=False)
