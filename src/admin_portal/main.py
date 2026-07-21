@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import logging
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -118,6 +118,57 @@ def build_redirect_url(path: str, **params: str) -> str:
     return f"{path}{separator}{query}"
 
 
+def build_next_queue_return_path(db: Session, *, current_message_id: int, return_to: str) -> str:
+    parsed_return = urlsplit(return_to or "/queue")
+    if parsed_return.path != "/queue":
+        return return_to or "/queue"
+
+    parsed_params = parse_qs(parsed_return.query, keep_blank_values=False)
+    search_text = (parsed_params.get("search") or [""])[0].strip()
+    category_raw = (parsed_params.get("category_id") or [""])[0]
+    category_id = int(category_raw) if category_raw.isdigit() else None
+    priority = (parsed_params.get("priority") or [""])[0].strip().lower()
+    reply_needed = (parsed_params.get("reply_needed") or [""])[0].strip().lower()
+
+    messages = list_queue_messages(
+        db,
+        search_text=search_text,
+        category_id=category_id,
+        priority=priority,
+        reply_needed=reply_needed,
+    )
+    ids = [message.id for message in messages]
+
+    next_selected_id: int | None = None
+    if ids:
+        if current_message_id in ids:
+            current_index = ids.index(current_message_id)
+            if current_index + 1 < len(ids):
+                next_selected_id = ids[current_index + 1]
+            elif current_index > 0:
+                next_selected_id = ids[current_index - 1]
+        else:
+            next_selected_id = ids[0]
+
+    if next_selected_id is not None:
+        parsed_params["selected_message_id"] = [str(next_selected_id)]
+    else:
+        parsed_params.pop("selected_message_id", None)
+
+    ordered_pairs: list[tuple[str, str]] = []
+    if parsed_params.get("selected_message_id"):
+        ordered_pairs.append(("selected_message_id", parsed_params["selected_message_id"][0]))
+    for key in ("search", "category_id", "priority", "reply_needed"):
+        value = (parsed_params.get(key) or [""])[0]
+        if value:
+            ordered_pairs.append((key, value))
+
+    query = urlencode(ordered_pairs)
+    if not query:
+        return "/queue"
+    return f"/queue?{query}"
+
+
 def build_queue_context(request: Request, **overrides):
     context = {
         "request": request,
@@ -127,6 +178,7 @@ def build_queue_context(request: Request, **overrides):
         "saved": request.query_params.get("saved") == "1",
         "polled": request.query_params.get("polled") == "1",
         "sent": request.query_params.get("sent") == "1",
+        "ignored": request.query_params.get("ignored") == "1",
         "send_error": request.query_params.get("send_error") or "",
         "page_error": resolve_page_error(request.query_params.get("error")),
         "selected_message": None,
@@ -142,6 +194,7 @@ def build_queue_context(request: Request, **overrides):
         "return_to_queue": "/queue",
         "categories": [],
         "subcategories": [],
+        "focus_queue": request.query_params.get("sent") == "1" or request.query_params.get("ignored") == "1",
         "filters": {
             "search": "",
             "category_id": "",
@@ -532,6 +585,7 @@ async def send_message_action(message_id: int, request: Request, db: Session = D
     body = await request.body()
     return_to = parse_return_to(body, "/queue")
     try:
+        next_return_to = build_next_queue_return_path(db, current_message_id=message_id, return_to=return_to)
         review_data = parse_review_form(body)
         send_data = parse_send_form(body)
         update_message_review(db, message_id, **review_data)
@@ -547,7 +601,7 @@ async def send_message_action(message_id: int, request: Request, db: Session = D
         logger.exception("Portal send action failed for message %s.", message_id)
         return RedirectResponse(url=build_redirect_url(return_to, send_error="failed"), status_code=303)
 
-    return RedirectResponse(url=build_redirect_url(return_to, sent="1"), status_code=303)
+    return RedirectResponse(url=build_redirect_url(next_return_to, sent="1"), status_code=303)
 
 
 @app.post("/messages/{message_id}/ignore")
@@ -559,8 +613,9 @@ async def ignore_message_action(message_id: int, request: Request, db: Session =
     body = await request.body()
     return_to = parse_return_to(body, "/queue")
     try:
+        next_return_to = build_next_queue_return_path(db, current_message_id=message_id, return_to=return_to)
         transition_message_status(db, message_id, "ignored")
-        return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)
+        return RedirectResponse(url=build_redirect_url(next_return_to, ignored="1"), status_code=303)
     except Exception:
         rollback_session(db)
         logger.exception("Ignore action failed for message %s.", message_id)

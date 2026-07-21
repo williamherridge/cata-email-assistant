@@ -1089,7 +1089,7 @@ def read_body_html_artifact(message: Message) -> str:
         path = Path(artifact.storage_uri)
         if path.exists():
             try:
-                return path.read_text(encoding="utf-8")
+                return trim_leading_rendered_email_html(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError):
                 logger.exception("Failed to read HTML body artifact for message %s from %s.", message.id, path)
                 return ""
@@ -1107,7 +1107,31 @@ def read_body_html_artifact(message: Message) -> str:
         return ""
 
     payload = raw_message.get("payload") or {}
-    return sanitize_email_html(extract_body_html(payload))
+    return trim_leading_rendered_email_html(sanitize_email_html(extract_body_html(payload)))
+
+
+def trim_leading_rendered_email_html(rendered_html: str) -> str:
+    trimmed = rendered_html.lstrip()
+    if not trimmed:
+        return ""
+
+    leading_empty_block_pattern = re.compile(
+        r"^(?:"
+        r"<br\s*/?>"
+        r"|&nbsp;"
+        r"|<div>\s*(?:&nbsp;|\s|<br\s*/?>)*</div>"
+        r"|<p>\s*(?:&nbsp;|\s|<br\s*/?>)*</p>"
+        r"|<span>\s*(?:&nbsp;|\s|<br\s*/?>)*</span>"
+        r")+",
+        flags=re.IGNORECASE,
+    )
+
+    while True:
+        updated = leading_empty_block_pattern.sub("", trimmed, count=1).lstrip()
+        if updated == trimmed:
+            break
+        trimmed = updated
+    return trimmed
 
 
 def read_sent_reply_records(

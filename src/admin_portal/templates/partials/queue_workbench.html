@@ -24,7 +24,7 @@
         </div>
       </div>
 
-      <form action="/messages/{{ selected_message.id }}/review" method="post" class="stack" data-draft-form>
+      <form id="{{ selected_message.id }}-review-form" action="/messages/{{ selected_message.id }}/review" method="post" class="stack" data-draft-form>
         <input type="hidden" name="return_to" value="{{ return_to_queue }}" />
         <div class="inline-label-grid">
           <div class="inline-field">
@@ -87,32 +87,20 @@
           </div>
         </div>
 
-        <label class="checkbox-row">
-          <input type="checkbox" name="informational_only" value="1" {% if selected_message.informational_only %}checked{% endif %} />
-          Informational only
-        </label>
-
-        <input type="hidden" name="draft_html" value="" data-draft-input />
-
-        <div class="button-row compact-button-row">
+        <div class="inline-checkbox-action-row">
           <button
             type="submit"
-            class="button-secondary"
-            formaction="/messages/{{ selected_message.id }}/send"
-            data-send-button
-          >Send</button>
-          <button
-            type="submit"
-            class="button-secondary"
-            formaction="/messages/{{ selected_message.id }}/draft"
-          >Save Draft</button>
-          <button type="button" class="button-secondary" disabled>Regenerate</button>
-          <button
-            type="submit"
-            class="button-warn"
+            class="button-warn action-ignore"
             formaction="/messages/{{ selected_message.id }}/ignore"
           >Ignore</button>
+
+          <label class="checkbox-row">
+            <input type="checkbox" name="informational_only" value="1" {% if selected_message.informational_only %}checked{% endif %} />
+            Informational only
+          </label>
         </div>
+
+        <input type="hidden" name="draft_html" value="" data-draft-input />
       </form>
 
       {% if selected_has_prior_reply and selected_message.status == "new" %}
@@ -126,6 +114,22 @@
     </div>
 
     <div class="panel compact-panel draft-panel">
+      <div class="draft-action-row">
+        <button
+          type="submit"
+          form="{{ selected_message.id }}-review-form"
+          class="button-secondary action-send"
+          formaction="/messages/{{ selected_message.id }}/send"
+          data-send-button
+        >Send</button>
+        <button
+          type="submit"
+          form="{{ selected_message.id }}-review-form"
+          class="button-secondary action-save-draft"
+          formaction="/messages/{{ selected_message.id }}/draft"
+        >Save Draft</button>
+        <button type="button" class="button-secondary action-regenerate" disabled>Regenerate</button>
+      </div>
       <div class="draft-surface" contenteditable="true" data-draft-editor>{{ draft_html|safe }}</div>
     </div>
 
@@ -144,7 +148,7 @@
             | Subject: {{ prior_reply.metadata.subject }}
           {% endif %}
         </div>
-        <div class="message-body-preview">
+        <div class="message-body-preview html-body-preview">
           <div class="rendered-email-body">{{ prior_reply.html|safe }}</div>
         </div>
       </div>
@@ -157,7 +161,7 @@
           <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
         {% endif %}
       </div>
-      <div class="message-body-preview">
+      <div class="message-body-preview {% if selected_body_html %}html-body-preview{% endif %}">
         {% if selected_body_html %}
           <div class="rendered-email-body">{{ selected_body_html|safe }}</div>
         {% else %}

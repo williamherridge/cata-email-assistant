@@ -154,7 +154,7 @@
                   | Subject: {{ sent_reply.metadata.subject }}
                 {% endif %}
               </div>
-              <div class="message-body-preview">
+              <div class="message-body-preview html-body-preview">
                 <div class="rendered-email-body">{{ sent_reply.html|safe }}</div>
               </div>
             {% else %}
@@ -170,7 +170,7 @@
               <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
             {% endif %}
           </div>
-          <div class="message-body-preview">
+          <div class="message-body-preview {% if selected_body_html %}html-body-preview{% endif %}">
             {% if selected_body_html %}
               <div class="rendered-email-body">{{ selected_body_html|safe }}</div>
             {% else %}

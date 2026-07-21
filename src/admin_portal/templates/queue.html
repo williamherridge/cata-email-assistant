@@ -43,6 +43,9 @@
       {% if sent %}
         <div class="notice">Reply sent. [Only to william@theherridges.com for testing] The message was marked responded and removed from the default queue.</div>
       {% endif %}
+      {% if ignored %}
+        <div class="notice">The message was marked ignored, removed from the default queue, and the next queue item was selected.</div>
+      {% endif %}
       {% if send_error == "permissions" %}
         <div class="notice">Send is blocked because Gmail authorization does not yet include send permission. Re-authorize the Gmail token, then try again.</div>
       {% elif send_error %}
@@ -97,7 +100,6 @@
       </form>
 
       <div class="queue-column-head">
-        <span></span>
         <span>From</span>
         <span>Subject</span>
         <span class="right">Date</span>
@@ -105,7 +107,13 @@
       </div>
 
       {% if messages %}
-        <div class="queue-scroll-region" tabindex="0" role="listbox" aria-label="Message queue">
+        <div
+          class="queue-scroll-region"
+          tabindex="0"
+          role="listbox"
+          aria-label="Message queue"
+          data-focus-queue="{% if focus_queue %}1{% else %}0{% endif %}"
+        >
           <div class="queue-list">
           {% for message in messages %}
             {% if filter_query %}
@@ -121,7 +129,6 @@
               aria-selected="{% if selected_message_id == message.id %}true{% else %}false{% endif %}"
               class="queue-row {% if selected_message_id == message.id %}selected{% endif %}"
             >
-              <div class="queue-dot"></div>
               <div class="queue-from">{{ message.from_display or message.from_address or "Unknown" }}</div>
               <div class="queue-subject">{{ message.subject or "(No subject)" }}</div>
               <div class="queue-date">{{ message.received_at|queue_received_datetime }}</div>

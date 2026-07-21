@@ -144,6 +144,56 @@ def test_queue_and_message_detail_render(tmp_path):
             storage_uri=str(body_path),
         )
     )
+
+    second_message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-4",
+        subject="Follow-up question",
+        rfc_message_id="<msg-4@example.com>",
+        from_address="second@example.com",
+        snippet="Second queue item body.",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(second_message)
+    session.flush()
+    second_body_path = tmp_path / "body-2.txt"
+    second_body_path.write_text("Second queue item body.", encoding="utf-8")
+    session.add(
+        MessageArtifact(
+            message_id=second_message.id,
+            artifact_type="normalized_body_text",
+            storage_uri=str(second_body_path),
+        )
+    )
+
+    third_message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-5",
+        subject="Third review item",
+        rfc_message_id="<msg-5@example.com>",
+        from_address="third@example.com",
+        snippet="Third queue item body.",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(third_message)
+    session.flush()
+    third_body_path = tmp_path / "body-3.txt"
+    third_body_path.write_text("Third queue item body.", encoding="utf-8")
+    session.add(
+        MessageArtifact(
+            message_id=third_message.id,
+            artifact_type="normalized_body_text",
+            storage_uri=str(third_body_path),
+        )
+    )
     session.commit()
 
     def override_db():
@@ -274,6 +324,8 @@ def test_queue_and_message_detail_render(tmp_path):
         assert send_response.status_code == 200
         assert "Reply sent. [Only to william@theherridges.com for testing] The message was marked responded and removed from the default queue." in send_response.text
         assert "Registration question" not in send_response.text
+        assert "Second queue item body." in send_response.text
+        assert f"selected_message_id={second_message.id}" in str(send_response.url)
 
         assert len(FakeSendGmailClient.sent_messages) == 1
         sent_payload = FakeSendGmailClient.sent_messages[0]
@@ -295,6 +347,23 @@ def test_queue_and_message_detail_render(tmp_path):
 
         event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
         assert "message_reply_sent" in event_types
+
+        ignore_response = client.post(
+            f"/messages/{second_message.id}/ignore",
+            data={
+                "return_to": f"/queue?selected_message_id={second_message.id}",
+            },
+            follow_redirects=True,
+        )
+        assert ignore_response.status_code == 200
+        assert "The message was marked ignored, removed from the default queue, and the next queue item was selected." in ignore_response.text
+        assert "Third queue item body." in ignore_response.text
+        assert f"selected_message_id={third_message.id}" in str(ignore_response.url)
+
+        session.expire_all()
+        ignored = session.get(Message, second_message.id)
+        assert ignored is not None
+        assert ignored.status == "ignored"
 
         history_response = client.get("/history?tab=responded")
         assert history_response.status_code == 200
@@ -380,7 +449,7 @@ def test_queue_and_message_detail_render(tmp_path):
             follow_redirects=True,
         )
         assert ignore_response.status_code == 200
-        assert "The queue view was updated after your last message action." in ignore_response.text
+        assert "The message was marked ignored, removed from the default queue, and the next queue item was selected." in ignore_response.text
         assert "Registration question" not in ignore_response.text
 
         session.expire_all()

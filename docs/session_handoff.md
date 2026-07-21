@@ -6,12 +6,12 @@ Last updated: July 21, 2026
 
 - Path: `/Users/williamherridge/Documents/repos/cata-email-assistant`
 - Branch: `master`
-- Latest pushed commit: `3a80fee` - `Improve queue navigation performance`
-- Remote status: local `master` is ahead by an in-progress workbench usability pass described below.
+- Latest pushed commit: `3c3dde4` - `Refine queue workbench usability`
+- Remote status: local `master` is ahead with an additional queue workflow polish pass described below.
 
 ## Working Tree
 
-- Current git status includes tracked workbench/UI updates plus one untracked local database file:
+- Current git status includes tracked queue/workbench follow-up updates plus one untracked local database file:
   - `data/app.db`
 - The untracked `data/app.db` file is a local scratch SQLite file and should not be committed.
 
@@ -98,6 +98,10 @@ Last updated: July 21, 2026
   - newest reply
   - prior sent reply if one exists
   - original inbound message once
+- Queue workbench now warns before discarding unsaved draft edits.
+- After `Send` or `Ignore`, the queue automatically advances to the next message and restores keyboard-navigation focus.
+- The queue no longer shows the old blue `new` dot because every item on that screen is already `new`.
+- Original email HTML rendering no longer shows the large false top gap caused by wrapper whitespace around stored HTML bodies.
 
 ## Latest Queue / Workbench Usability Pass
 
@@ -111,6 +115,13 @@ The latest pass focused on making the desktop queue and workbench feel closer to
   - `ArrowUp` selects the previous row
   - `ArrowDown` selects the next row
 - The left queue pane now has its own vertical scroll region.
+- Unsaved draft edits now trigger a confirmation prompt before the user:
+  - clicks into another queue row
+  - uses `ArrowUp` / `ArrowDown` to move to another row
+  - follows links
+  - submits non-draft forms
+  - leaves or refreshes the page
+- After `Send` or `Ignore`, the next queue item is selected automatically and the queue list regains focus for continued keyboard use.
 
 ### Draft / review workflow improvements completed
 
@@ -141,11 +152,13 @@ The latest pass focused on making the desktop queue and workbench feel closer to
 - Queue rows were tightened:
   - `From` and `Subject` now use regular weight instead of bold
   - row padding is smaller vertically
+  - the old blue `new` status dot was removed
 - On larger monitors the shell can expand much wider before adding large side margins.
 
 ### Original message rendering improvements completed
 
 - Rendered original-email content now uses tighter block spacing so HTML emails no longer appear with exaggerated vertical whitespace compared with the original.
+- HTML message wrappers now render with normal whitespace handling so template indentation does not create a false blank block before the message body.
 
 ## Queue Performance Pass
 
@@ -228,21 +241,22 @@ Key rule:
 
 ## Recent Commits
 
+- `3c3dde4` `Refine queue workbench usability`
 - `3a80fee` `Improve queue navigation performance`
 - `5d07f2a` `Harden portal workflows and expand message history`
-- `9f9b0ba` `Improve original email body rendering`
 
 ## Current In-Progress Commit Content
 
-Files updated in the latest usability/workbench pass:
+Files updated in the current queue/workbench follow-up pass:
 
 - [src/admin_portal/main.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/main.py)
 - [src/workflow/polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/workflow/polling.py)
 - [src/admin_portal/templates/base.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/base.html)
+- [src/admin_portal/templates/history.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/history.html)
+- [src/admin_portal/templates/message_detail.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/message_detail.html)
 - [src/admin_portal/templates/queue.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/queue.html)
 - [src/admin_portal/templates/partials/queue_workbench.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/partials/queue_workbench.html)
 - [tests/integration/test_admin_portal.py](/Users/williamherridge/Documents/repos/cata-email-assistant/tests/integration/test_admin_portal.py)
-- [tests/unit/test_polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/tests/unit/test_polling.py)
 
 ## Last Verified Checks
 
@@ -256,6 +270,10 @@ Files updated in the latest usability/workbench pass:
   - completed successfully and applied queue/history performance indexes
 - `./.venv/bin/python3 -m compileall src`
   - completed successfully after the latest UI/workbench updates
+- `./.venv/bin/python3 -m pytest tests/integration/test_admin_portal.py -q`
+  - result: `1 passed`
+- `./.venv/bin/python3 -m compileall src`
+  - completed successfully after the latest queue workflow and original-email whitespace fixes
 
 ## Known Open Areas
 
