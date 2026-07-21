@@ -6,12 +6,12 @@ Last updated: July 21, 2026
 
 - Path: `/Users/williamherridge/Documents/repos/cata-email-assistant`
 - Branch: `master`
-- Latest pushed commit: `5d07f2a` - `Harden portal workflows and expand message history`
-- Remote status: local `master` is ahead only by the in-progress performance pass described below.
+- Latest pushed commit: `3a80fee` - `Improve queue navigation performance`
+- Remote status: local `master` is ahead by an in-progress workbench usability pass described below.
 
 ## Working Tree
 
-- Current git status includes tracked performance-pass changes plus one untracked local database file:
+- Current git status includes tracked workbench/UI updates plus one untracked local database file:
   - `data/app.db`
 - The untracked `data/app.db` file is a local scratch SQLite file and should not be committed.
 
@@ -47,6 +47,7 @@ Last updated: July 21, 2026
 - Signature was updated to the Casey Herridge format requested by the user.
 - Tennis Austin logo assets are now included in the draft signature.
 - Queue navigation performance was improved for cross-device use on the local network.
+- Queue/workbench usability was substantially refined after the performance pass.
 
 ## Taxonomy And Classification Progress
 
@@ -97,6 +98,54 @@ Last updated: July 21, 2026
   - newest reply
   - prior sent reply if one exists
   - original inbound message once
+
+## Latest Queue / Workbench Usability Pass
+
+The latest pass focused on making the desktop queue and workbench feel closer to a real mail client.
+
+### Interaction improvements completed
+
+- Desktop queue row selection now updates only the right workbench pane instead of reloading the full page.
+- The left queue pane now supports keyboard navigation:
+  - click the queue list to focus it
+  - `ArrowUp` selects the previous row
+  - `ArrowDown` selects the next row
+- The left queue pane now has its own vertical scroll region.
+
+### Draft / review workflow improvements completed
+
+- Draft greeting changed from `Hello [sender]` to `Hi [first name]`.
+- Draft salutation now uses the same font styling as the `Thank you,` line:
+  - Aptos/Calibri fallback
+  - 12pt
+  - regular weight
+- Two blank composition lines were added after the salutation before the signature block.
+- `Save Draft` is now a working feature:
+  - the current draft body, recipients, and subject persist as a saved draft artifact
+  - saved drafts reload into the workbench when the message is revisited
+- Review/action buttons were reorganized:
+  - `Save Review` moved up next to the review metadata controls
+  - bottom action row now centers on message actions like `Send`, `Save Draft`, `Regenerate`, and `Ignore`
+
+### Layout tightening completed
+
+- App header was compressed:
+  - smaller title
+  - subtitle removed
+  - `Queue` and `History` stay on the same line as the title
+- Queue header was compressed into a tighter single-line treatment.
+- Queue and workbench panels use tighter padding and reduced vertical gaps.
+- Review controls now use denser inline layout:
+  - `To`, `Cc`, and `Subject` use inline labels
+  - `Priority` and `Reply Needed` are narrower than `Category` and `Subcategory`
+- Queue rows were tightened:
+  - `From` and `Subject` now use regular weight instead of bold
+  - row padding is smaller vertically
+- On larger monitors the shell can expand much wider before adding large side margins.
+
+### Original message rendering improvements completed
+
+- Rendered original-email content now uses tighter block spacing so HTML emails no longer appear with exaggerated vertical whitespace compared with the original.
 
 ## Queue Performance Pass
 
@@ -179,19 +228,21 @@ Key rule:
 
 ## Recent Commits
 
+- `3a80fee` `Improve queue navigation performance`
 - `5d07f2a` `Harden portal workflows and expand message history`
 - `9f9b0ba` `Improve original email body rendering`
-- `3d9e200` `Add queue filters and classification fixes`
 
 ## Current In-Progress Commit Content
 
-Files updated in the queue-performance pass:
+Files updated in the latest usability/workbench pass:
 
 - [src/admin_portal/main.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/main.py)
-- [src/shared/models.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/shared/models.py)
 - [src/workflow/polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/workflow/polling.py)
-- [src/workflow/taxonomy.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/workflow/taxonomy.py)
-- [alembic/versions/20260721_03_message_queue_indexes.py](/Users/williamherridge/Documents/repos/cata-email-assistant/alembic/versions/20260721_03_message_queue_indexes.py)
+- [src/admin_portal/templates/base.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/base.html)
+- [src/admin_portal/templates/queue.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/queue.html)
+- [src/admin_portal/templates/partials/queue_workbench.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/partials/queue_workbench.html)
+- [tests/integration/test_admin_portal.py](/Users/williamherridge/Documents/repos/cata-email-assistant/tests/integration/test_admin_portal.py)
+- [tests/unit/test_polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/tests/unit/test_polling.py)
 
 ## Last Verified Checks
 
@@ -200,9 +251,11 @@ Files updated in the queue-performance pass:
 - `python3 -m compileall src`
   - completed successfully
 - `./.venv/bin/python3 -m pytest tests/unit/test_polling.py tests/integration/test_admin_portal.py -q`
-  - result: `15 passed`
+  - result: `17 passed`
 - `./.venv/bin/python3 -m alembic upgrade head`
   - completed successfully and applied queue/history performance indexes
+- `./.venv/bin/python3 -m compileall src`
+  - completed successfully after the latest UI/workbench updates
 
 ## Known Open Areas
 
@@ -210,17 +263,14 @@ Files updated in the queue-performance pass:
 - Team registration parsing is improved but still not considered final by the user.
 - CLI/export utilities have not yet received the same resilience pass as the live portal/runtime code.
 - Queue/history pagination or list limiting will be needed later.
-- The biggest remaining performance opportunity is replacing full-page queue reloads with partial right-pane updates.
+- History screen does not yet use the same partial-pane update behavior as the queue screen.
 - `DEFAULT_GMAIL_ADDRESS` should still be set in local config even though the runtime now handles the unset case more efficiently.
 
 ## Next Recommended Step
 
-1. Validate the latest queue performance manually from a second device:
-   - queue row selection latency
-   - history row selection latency
-   - no unexpected Gmail round-trips during navigation
-2. If that looks good, continue with product work on deterministic categorization and queue/workbench enhancements.
-3. Later, consider converting the queue to partial-pane updates instead of full page reloads.
+1. Compact and resume from this handoff when ready.
+2. Next likely product step: continue message categorization / deterministic routing work.
+3. Optional UX follow-up: apply the same partial-pane update pattern to the History screen.
 4. Revisit `Open In Gmail` fallback behavior if the Gmail browser deep-link issue persists.
 5. Later, apply a similar resilience pass to the CLI/export scripts.
 

@@ -538,6 +538,28 @@ def test_team_registration_auto_classifies_when_league_and_level_are_split(monke
     assert result.priority == "normal"
 
 
+def test_build_default_draft_html_uses_first_name_greeting():
+    message = Message(
+        from_display="Jane Flynn",
+        from_address="jane.flynn@example.com",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+
+    draft_html = polling.build_default_draft_html(message)
+
+    assert "Hi Jane," in draft_html
+    assert "Hello Jane Flynn" not in draft_html
+
+
+def test_first_name_from_sender_handles_display_and_email_variants():
+    assert polling.first_name_from_sender("Jane Flynn") == "Jane"
+    assert polling.first_name_from_sender("'Tennis Austin' via Leagues") == "Tennis"
+    assert polling.first_name_from_sender("jane.flynn@example.com") == "Jane"
+
+
 def test_poll_mailbox_syncs_reply_sent_directly_in_gmail(monkeypatch, tmp_path):
     session = make_session()
     settings = make_settings(tmp_path)

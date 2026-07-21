@@ -1,0 +1,174 @@
+<div id="queue-workbench-pane" class="grid workbench-stack" data-queue-workbench>
+  {% if selected_message %}
+    <div class="panel compact-panel">
+      <div class="section-header compact-header">
+        <div>
+          <h3 style="margin-bottom: 0.15rem;">{{ selected_message.subject or "(No subject)" }}</h3>
+          <div class="muted compact-meta-line">
+            {{ selected_message.from_display or selected_message.from_address or "Unknown" }}
+            {% if selected_message.received_at %}
+              <span>|</span> {{ selected_message.received_at|portal_datetime }}
+            {% endif %}
+          </div>
+        </div>
+        <div class="button-row compact-button-row">
+          <a href="/messages/{{ selected_message.id }}" class="link-button">Full Detail</a>
+          {% if selected_message.thread %}
+            <a
+              href="https://mail.google.com/mail/u/0/#all/{{ selected_message.thread.gmail_thread_id }}"
+              class="link-button"
+              target="_blank"
+              rel="noreferrer"
+            >Open In Gmail</a>
+          {% endif %}
+        </div>
+      </div>
+
+      <form action="/messages/{{ selected_message.id }}/review" method="post" class="stack" data-draft-form>
+        <input type="hidden" name="return_to" value="{{ return_to_queue }}" />
+        <div class="inline-label-grid">
+          <div class="inline-field">
+            <div class="inline-field-label">To</div>
+            <input type="text" name="draft_to" value="{{ reply_to_addresses }}" />
+          </div>
+          <div class="inline-field">
+            <div class="inline-field-label">Cc</div>
+            <input type="text" name="draft_cc" value="{{ reply_cc_addresses }}" />
+          </div>
+          <div class="inline-field-label subject-label">Subject</div>
+          <div class="subject-input">
+            <input type="text" name="draft_subject" value="{{ reply_subject }}" />
+          </div>
+        </div>
+
+        <div class="inline-select-grid review-select-grid">
+          <label>
+            Category
+            <select name="assigned_category_id">
+              <option value="">Unassigned</option>
+              {% for category in categories %}
+                <option
+                  value="{{ category.id }}"
+                  {% if selected_message.assigned_category_id == category.id %}selected{% endif %}
+                >{{ category.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Subcategory
+            <select name="assigned_subcategory_id">
+              <option value="">None</option>
+              {% for subcategory in subcategories %}
+                <option
+                  value="{{ subcategory.id }}"
+                  {% if selected_message.assigned_subcategory_id == subcategory.id %}selected{% endif %}
+                >{{ subcategory.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Priority
+            <select name="priority">
+              {% for option in ["critical", "normal", "low"] %}
+                <option value="{{ option }}" {% if selected_message.priority == option %}selected{% endif %}>{{ option|title }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            Reply Needed
+            <select name="reply_needed">
+              <option value="unknown" {% if selected_message.reply_needed is none %}selected{% endif %}>Unknown</option>
+              <option value="yes" {% if selected_message.reply_needed %}selected{% endif %}>Yes</option>
+              <option value="no" {% if selected_message.reply_needed is sameas false %}selected{% endif %}>No</option>
+            </select>
+          </label>
+          <div class="review-save-slot">
+            <button type="submit">Save Review</button>
+          </div>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" name="informational_only" value="1" {% if selected_message.informational_only %}checked{% endif %} />
+          Informational only
+        </label>
+
+        <input type="hidden" name="draft_html" value="" data-draft-input />
+
+        <div class="button-row compact-button-row">
+          <button
+            type="submit"
+            class="button-secondary"
+            formaction="/messages/{{ selected_message.id }}/send"
+            data-send-button
+          >Send</button>
+          <button
+            type="submit"
+            class="button-secondary"
+            formaction="/messages/{{ selected_message.id }}/draft"
+          >Save Draft</button>
+          <button type="button" class="button-secondary" disabled>Regenerate</button>
+          <button
+            type="submit"
+            class="button-warn"
+            formaction="/messages/{{ selected_message.id }}/ignore"
+          >Ignore</button>
+        </div>
+      </form>
+
+      {% if selected_has_prior_reply and selected_message.status == "new" %}
+        <div class="button-row compact-button-row" style="margin-top: 0.3rem;">
+          <form action="/messages/{{ selected_message.id }}/responded" method="post">
+            <input type="hidden" name="return_to" value="/history?tab=responded&selected_message_id={{ selected_message.id }}" />
+            <button type="submit" class="button-secondary">Return to Responded</button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="panel compact-panel draft-panel">
+      <div class="draft-surface" contenteditable="true" data-draft-editor>{{ draft_html|safe }}</div>
+    </div>
+
+    {% if selected_has_prior_reply and selected_sent_reply_records %}
+      {% set prior_reply = selected_sent_reply_records[0] %}
+      <div class="panel compact-panel">
+        <div class="section-header compact-header">
+          <h3>Previous Reply Sent</h3>
+          <span class="muted">Read-only history</span>
+        </div>
+        <div class="muted compact-meta-line" style="margin-bottom: 0.4rem;">
+          {% if selected_message.responded_at %}
+            Sent {{ selected_message.responded_at|portal_datetime }}
+          {% endif %}
+          {% if prior_reply.metadata.subject %}
+            | Subject: {{ prior_reply.metadata.subject }}
+          {% endif %}
+        </div>
+        <div class="message-body-preview">
+          <div class="rendered-email-body">{{ prior_reply.html|safe }}</div>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="panel compact-panel">
+      <div class="section-header compact-header">
+        <h3>Original Email</h3>
+        {% if selected_message.attachments %}
+          <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
+        {% endif %}
+      </div>
+      <div class="message-body-preview">
+        {% if selected_body_html %}
+          <div class="rendered-email-body">{{ selected_body_html|safe }}</div>
+        {% else %}
+          {{ selected_body_text or selected_message.snippet or "No body content captured." }}
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="panel empty-workbench">
+      <h3>No Message Selected</h3>
+      <p class="muted">Select a queue item to review metadata, shape a reply, and inspect the original email without leaving this screen.</p>
+    </div>
+  {% endif %}
+</div>

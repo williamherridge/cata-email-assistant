@@ -163,13 +163,13 @@ def test_queue_and_message_detail_render(tmp_path):
         queue_response = client.get("/queue")
         assert queue_response.status_code == 200
         assert "Registration question" in queue_response.text
-        assert "Pilot Inbox" in queue_response.text
+        assert "Queue" in queue_response.text
         assert "Sent update" not in queue_response.text
         assert "Already ignored" not in queue_response.text
-        assert "Reply Draft" in queue_response.text
         assert "Original Email" in queue_response.text
         assert "Full Detail" in queue_response.text
         assert 'name="draft_cc" value=""' in queue_response.text
+        assert "Pilot send mode is active" not in queue_response.text
 
         filtered_search_response = client.get("/queue?search=Registration")
         assert filtered_search_response.status_code == 200
@@ -179,6 +179,12 @@ def test_queue_and_message_detail_render(tmp_path):
         filtered_category_response = client.get(f"/queue?category_id={category.id}")
         assert filtered_category_response.status_code == 200
         assert "Registration question" in filtered_category_response.text
+
+        queue_selection_response = client.get(f"/queue/selection?selected_message_id={message.id}")
+        assert queue_selection_response.status_code == 200
+        assert 'data-queue-workbench' in queue_selection_response.text
+        assert "Original Email" in queue_selection_response.text
+        assert "Hi Parent," in queue_selection_response.text
 
         poll_runs_response = client.get("/poll-runs")
         assert poll_runs_response.status_code == 200
@@ -229,6 +235,26 @@ def test_queue_and_message_detail_render(tmp_path):
         )
         assert failed_review_response.status_code == 200
         assert "Review changes could not be saved." in failed_review_response.text
+
+        save_draft_response = client.post(
+            f"/messages/{message.id}/draft",
+            data={
+                "return_to": f"/queue?selected_message_id={message.id}",
+                "draft_to": "parent@example.com",
+                "draft_cc": "helper@example.com",
+                "draft_subject": "Re: Registration question",
+                "draft_html": "<p>Saved draft body</p>",
+            },
+            follow_redirects=True,
+        )
+        assert save_draft_response.status_code == 200
+        assert "The queue view was updated after your last message action." in save_draft_response.text
+        assert "Saved draft body" in save_draft_response.text
+
+        session.expire_all()
+        drafted = session.get(Message, message.id)
+        assert drafted is not None
+        assert drafted.draft_state == "ready"
 
         send_response = client.post(
             f"/messages/{message.id}/send",

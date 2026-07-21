@@ -51,6 +51,7 @@ from src.shared.models import (
 TEST_SEND_AUDIT_RULE = "forced_test_recipient_override"
 SENT_REPLY_HTML_ARTIFACT = "sent_reply_html"
 SENT_REPLY_METADATA_ARTIFACT = "sent_reply_metadata"
+PORTAL_DRAFT_ARTIFACT = "portal_reply_draft"
 DEFAULT_SIGNATURE_LOGO_PATH = Path("src/admin_portal/static/images/tennis-austin-full-logo")
 logger = logging.getLogger(__name__)
 _DEFAULT_SIGNATURE_LOGO_HTML: str | None = None
@@ -1235,6 +1236,16 @@ def parse_send_form(body: bytes) -> dict[str, object]:
     }
 
 
+def parse_draft_form(body: bytes) -> dict[str, object]:
+    parsed = parse_form_body(body)
+    return {
+        "draft_to": normalize_optional_text(parsed.get("draft_to", [""])[0]) or "",
+        "draft_cc": normalize_optional_text(parsed.get("draft_cc", [""])[0]) or "",
+        "draft_subject": normalize_optional_text(parsed.get("draft_subject", [""])[0]) or "Re:",
+        "draft_html": normalize_optional_text(parsed.get("draft_html", [""])[0]) or "",
+    }
+
+
 def parse_return_to(body: bytes, default: str) -> str:
     parsed = parse_form_body(body)
     return normalize_return_to(parsed.get("return_to", [default])[0], default)
@@ -1331,12 +1342,18 @@ def is_sent_message(message: Message) -> bool:
 
 
 def get_reply_to_addresses(message: Message) -> str:
+    saved = read_saved_draft_record(message)
+    if saved is not None:
+        return str(saved.get("draft_to") or "")
     if message.from_address:
         return message.from_address
     return ""
 
 
 def get_reply_cc_addresses(message: Message) -> str:
+    saved = read_saved_draft_record(message)
+    if saved is not None:
+        return str(saved.get("draft_cc") or "")
     return ""
 
 
@@ -1355,6 +1372,11 @@ def get_ignore_source(message: Message) -> str:
 
 
 def build_reply_subject(message: Message) -> str:
+    saved = read_saved_draft_record(message)
+    if saved is not None:
+        subject = str(saved.get("draft_subject") or "").strip()
+        if subject:
+            return subject
     subject = (message.subject or "").strip()
     if not subject:
         return "Re:"
@@ -1466,20 +1488,80 @@ def send_reply_message(
     return get_message_detail(session, message_id) or message
 
 
+def save_message_draft(
+    session: Session,
+    settings: Settings,
+    message_id: int,
+    *,
+    draft_to: str,
+    draft_cc: str,
+    draft_subject: str,
+    draft_html: str,
+) -> Message:
+    message = get_message_detail(session, message_id)
+    if message is None:
+        raise ValueError(f"Message {message_id} was not found.")
+    if not draft_html.strip():
+        raise ValueError("Reply draft is empty.")
+
+    draft_folder = settings.resolved_artifact_root / "drafts" / f"mailbox-{message.mailbox_id}"
+    draft_folder.mkdir(parents=True, exist_ok=True)
+    draft_path = draft_folder / f"{message.gmail_message_id}.json"
+    payload = {
+        "draft_to": draft_to,
+        "draft_cc": draft_cc,
+        "draft_subject": draft_subject,
+        "draft_html": sanitize_email_html(draft_html),
+        "saved_at": utcnow().isoformat(),
+    }
+    serialized = json.dumps(payload, indent=2, sort_keys=True)
+    draft_path.write_text(serialized, encoding="utf-8")
+    draft_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    existing = next((artifact for artifact in message.artifacts if artifact.artifact_type == PORTAL_DRAFT_ARTIFACT), None)
+    if existing is None:
+        existing = create_message_artifact(message, PORTAL_DRAFT_ARTIFACT, draft_path, draft_hash)
+    else:
+        existing.storage_uri = str(draft_path)
+        existing.content_sha256 = draft_hash
+
+    session.flush()
+    message.latest_draft_id = existing.id
+    message.draft_state = "ready"
+    message.updated_at = utcnow()
+    session.add(
+        AuditEvent(
+            mailbox_id=message.mailbox_id,
+            message_id=message.id,
+            event_type="message_draft_saved",
+            actor_type="admin_portal",
+            summary="Administrator saved a reply draft in the portal.",
+        )
+    )
+    session.commit()
+    return get_message_detail(session, message_id) or message
+
+
 def build_default_draft_html(message: Message) -> str:
+    saved = read_saved_draft_record(message)
+    if saved is not None:
+        saved_html = str(saved.get("draft_html") or "").strip()
+        if saved_html:
+            return saved_html
+
     summary_html = build_manual_work_summary_html(message)
     if summary_html:
         return summary_html
 
-    recipient_name = message.from_display or message.from_address or "there"
+    recipient_name = resolve_reply_recipient_name(message)
     return (
-        f"<p>Hello {recipient_name},</p>"
-        "<p><br></p>"
-        '<p style="font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400; margin: 0;">Thank you,</p>'
-        '<p style="font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400; margin: 0;"><br></p>'
-        '<p style="font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 700; margin: 0;">Casey Herridge</p>'
-        '<p style="font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 400; margin: 0;">Leagues Director | (210) 275.3173</p>'
-        '<p style="margin: 0;">'
+        f'<p style="margin: 0 0 0.35rem; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Hi {html.escape(recipient_name)},</p>'
+        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>'
+        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>'
+        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Thank you,</p>'
+        '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 700;">Casey Herridge</p>'
+        '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 400;">Leagues Director | (210) 275.3173</p>'
+        '<p style="margin: 0; line-height: 1.1;">'
         '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;">Capital Area Tennis Association </span>'
         '<span style="font-family: Tahoma, sans-serif; font-size: 5pt; font-weight: 400;">d/b/a</span>'
         '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;"> Tennis Austin</span>'
@@ -1509,6 +1591,53 @@ def build_default_signature_logo_html() -> str:
         "</div>"
     )
     return _DEFAULT_SIGNATURE_LOGO_HTML
+
+
+def resolve_reply_recipient_name(message: Message) -> str:
+    candidate = first_name_from_sender(message.from_display)
+    if candidate:
+        return candidate
+    candidate = first_name_from_sender(message.from_address)
+    if candidate:
+        return candidate
+    return "there"
+
+
+def read_saved_draft_record(message: Message) -> dict[str, object] | None:
+    artifact = next((item for item in message.artifacts if item.artifact_type == PORTAL_DRAFT_ARTIFACT), None)
+    if artifact is None:
+        return None
+    path = Path(artifact.storage_uri)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        logger.exception("Failed to read saved portal draft for message %s.", message.id)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def first_name_from_sender(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+
+    if "@" in normalized and "<" not in normalized and " " not in normalized:
+        local_part = normalized.split("@", 1)[0]
+        normalized = local_part.replace(".", " ").replace("_", " ").replace("-", " ")
+
+    normalized = normalized.strip().strip("\"' ")
+    normalized = re.sub(r"\s+via\s+.*$", "", normalized, flags=re.IGNORECASE).strip()
+    normalized = re.sub(r"\s*<[^>]+>$", "", normalized).strip()
+    if not normalized:
+        return None
+
+    for token in re.split(r"\s+", normalized):
+        cleaned = re.sub(r"^[^A-Za-z]+|[^A-Za-z'-]+$", "", token)
+        if cleaned and re.search(r"[A-Za-z]", cleaned):
+            return cleaned.capitalize() if cleaned.islower() or cleaned.isupper() else cleaned
+    return None
 
 
 def build_outbound_reply_html(

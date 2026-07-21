@@ -40,12 +40,14 @@ from src.workflow.polling import (
     normalize_history_tab,
     normalize_ignored_scope,
     parse_review_form,
+    parse_draft_form,
     parse_send_form,
     parse_return_to,
     poll_mailbox,
     read_body_artifact,
     read_body_html_artifact,
     read_sent_reply_records,
+    save_message_draft,
     send_reply_message,
     transition_message_status,
     update_message_review,
@@ -152,6 +154,30 @@ def build_queue_context(request: Request, **overrides):
     return context
 
 
+def build_queue_selection_context(
+    db: Session,
+    *,
+    selected_message,
+    selected_id: int | None,
+    filter_query: str,
+):
+    return {
+        "selected_message": selected_message,
+        "selected_message_id": selected_id,
+        "reply_to_addresses": get_reply_to_addresses(selected_message) if selected_message else "",
+        "reply_cc_addresses": get_reply_cc_addresses(selected_message) if selected_message else "",
+        "reply_subject": build_reply_subject(selected_message) if selected_message else "",
+        "draft_html": build_default_draft_html(selected_message) if selected_message else "",
+        "selected_sent_reply_records": read_sent_reply_records(selected_message) if selected_message else [],
+        "selected_has_prior_reply": has_prior_sent_reply(selected_message) if selected_message else False,
+        "selected_body_text": read_body_artifact(selected_message) if selected_message else "",
+        "selected_body_html": read_body_html_artifact(selected_message) if selected_message else "",
+        "return_to_queue": build_queue_return_path(selected_id, filter_query),
+        "categories": list_active_categories(db),
+        "subcategories": list_active_subcategories(db),
+    }
+
+
 def build_history_context(request: Request, **overrides):
     tab = normalize_history_tab(request.query_params.get("tab"))
     context = {
@@ -234,6 +260,12 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
             selected_message = get_message_detail_for_view(db, selected_id, view="queue")
             if selected_message is not None:
                 mark_message_opened(db, selected_message)
+        selection_context = build_queue_selection_context(
+            db,
+            selected_message=selected_message,
+            selected_id=selected_id,
+            filter_query=filter_query,
+        )
         return templates.TemplateResponse(
             request,
             name="queue.html",
@@ -242,21 +274,9 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
                 messages=messages,
                 mailboxes=list_mailboxes(db),
                 poll_runs=get_recent_poll_runs(db),
-                selected_message=selected_message,
-                selected_message_id=selected_id,
-                reply_to_addresses=get_reply_to_addresses(selected_message) if selected_message else "",
-                reply_cc_addresses=get_reply_cc_addresses(selected_message) if selected_message else "",
-                reply_subject=build_reply_subject(selected_message) if selected_message else "",
-                draft_html=build_default_draft_html(selected_message) if selected_message else "",
-                selected_sent_reply_records=read_sent_reply_records(selected_message) if selected_message else [],
-                selected_has_prior_reply=has_prior_sent_reply(selected_message) if selected_message else False,
-                selected_body_text=read_body_artifact(selected_message) if selected_message else "",
-                selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
-                return_to_queue=build_queue_return_path(selected_id, filter_query),
-                categories=list_active_categories(db),
-                subcategories=list_active_subcategories(db),
                 filters=filter_params,
                 filter_query=filter_query,
+                **selection_context,
             ),
         )
     except Exception:
@@ -271,6 +291,60 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
                 filters=filter_params,
                 filter_query=filter_query,
             ),
+        )
+
+
+@app.get("/queue/selection", response_class=HTMLResponse)
+def queue_selection_partial(request: Request, db: Session = Depends(get_db_session)):
+    selected_message_id = request.query_params.get("selected_message_id")
+    selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
+    search_text = (request.query_params.get("search") or "").strip()
+    category_raw = request.query_params.get("category_id") or ""
+    priority = (request.query_params.get("priority") or "").strip().lower()
+    reply_needed = (request.query_params.get("reply_needed") or "").strip().lower()
+    filter_query = urlencode(
+        {
+            key: value
+            for key, value in {
+                "search": search_text,
+                "category_id": category_raw,
+                "priority": priority,
+                "reply_needed": reply_needed,
+            }.items()
+            if value
+        }
+    )
+    try:
+        ensure_default_mailbox(db, settings)
+        sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
+        selected_message = None
+        if selected_id is not None:
+            selected_message = get_message_detail_for_view(db, selected_id, view="queue")
+            if selected_message is not None and selected_message.status == "new":
+                mark_message_opened(db, selected_message)
+        return templates.TemplateResponse(
+            request,
+            name="partials/queue_workbench.html",
+            context=build_queue_selection_context(
+                db,
+                selected_message=selected_message,
+                selected_id=selected_id,
+                filter_query=filter_query,
+            ),
+        )
+    except Exception:
+        rollback_session(db)
+        logger.exception("Queue selection partial failed.")
+        return templates.TemplateResponse(
+            request,
+            name="partials/queue_workbench.html",
+            context=build_queue_selection_context(
+                db,
+                selected_message=None,
+                selected_id=selected_id,
+                filter_query=filter_query,
+            ),
+            status_code=200,
         )
 
 
@@ -428,6 +502,24 @@ async def update_message_review_action(
     except Exception:
         rollback_session(db)
         logger.exception("Review update failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="review_save_failed"), status_code=303)
+
+
+@app.post("/messages/{message_id}/draft")
+async def save_message_draft_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
+    message = get_message_detail(db, message_id)
+    if message is None:
+        return RedirectResponse(url=build_redirect_url("/queue", error="message_missing"), status_code=303)
+
+    body = await request.body()
+    return_to = parse_return_to(body, "/queue")
+    try:
+        draft_data = parse_draft_form(body)
+        save_message_draft(db, settings, message_id, **draft_data)
+        return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Draft save failed for message %s.", message_id)
         return RedirectResponse(url=build_redirect_url(return_to, error="review_save_failed"), status_code=303)
 
 
