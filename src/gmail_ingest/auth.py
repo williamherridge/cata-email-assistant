@@ -8,7 +8,10 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-READONLY_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+DEFAULT_GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "config"
@@ -21,13 +24,16 @@ def get_gmail_service(scopes=None, credentials_path=None, token_path=None):
     """Return an authenticated Gmail API service client."""
     load_dotenv(ENV_PATH)
 
-    requested_scopes = scopes or READONLY_SCOPES
+    requested_scopes = scopes or DEFAULT_GMAIL_SCOPES
     credentials_path = Path(credentials_path or CREDENTIALS_PATH)
     token_path = Path(token_path or TOKEN_PATH)
 
     creds = None
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), requested_scopes)
+        granted_scopes = set(creds.scopes or [])
+        if not set(requested_scopes).issubset(granted_scopes):
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:

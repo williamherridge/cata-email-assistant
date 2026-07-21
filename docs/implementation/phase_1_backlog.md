@@ -157,3 +157,5 @@ That path will validate the mailbox integration, the schema, and the portal shap
 - Hide messages sent from the monitored mailbox from the default queue because they usually represent completed work rather than new tasks.
 - Preserve the ability to review older responded messages and sent-message history in secondary views, but keep them out of the default queue by default.
 - Add future workbench behaviors that support task tracking, including reminders, snooze or hide-until dates, and follow-up management.
+- Add a dedicated `History` screen with separate `Sent/Responded` and `Ignored` tabs.
+- Make reopened messages visibly distinct in the active queue when a reply had already been sent previously.

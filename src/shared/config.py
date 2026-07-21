@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     )
     gmail_initial_sync_days: int = Field(default=30, alias="GMAIL_INITIAL_SYNC_DAYS")
     gmail_initial_sync_max_results: int = Field(default=50, alias="GMAIL_INITIAL_SYNC_MAX_RESULTS")
+    gmail_test_send_override: str | None = Field(
+        default="william@theherridges.com",
+        alias="GMAIL_TEST_SEND_OVERRIDE",
+    )
 
     @property
     def resolved_database_url(self) -> str:

@@ -47,6 +47,17 @@
         margin-bottom: 1.5rem;
       }
 
+      .hero-nav {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .hero-nav a {
+        text-decoration: none;
+      }
+
       .hero h1 {
         margin: 0;
         font-size: clamp(2rem, 3vw, 3.25rem);
@@ -216,6 +227,81 @@
         gap: 0.2rem;
       }
 
+      .history-layout {
+        display: grid;
+        grid-template-columns: minmax(380px, 520px) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+
+      .history-list {
+        display: grid;
+      }
+
+      .history-row {
+        display: grid;
+        gap: 0.35rem;
+        padding: 0.9rem 1.15rem;
+        color: inherit;
+        text-decoration: none;
+        border-left: 4px solid transparent;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .history-row:hover {
+        background: rgba(15, 118, 110, 0.04);
+      }
+
+      .history-row.selected {
+        background: rgba(15, 118, 110, 0.08);
+        border-left-color: var(--accent);
+      }
+
+      .history-row-top {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      .history-row-from {
+        font-weight: 700;
+      }
+
+      .history-row-date {
+        color: var(--muted);
+        white-space: nowrap;
+        text-align: right;
+      }
+
+      .history-row-subject {
+        font-weight: 700;
+      }
+
+      .history-tabs {
+        display: flex;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+      }
+
+      .tab-link {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.65rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        text-decoration: none;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.45);
+      }
+
+      .tab-link.active {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+      }
+
       .meta-icon {
         display: inline-flex;
         align-items: center;
@@ -244,6 +330,16 @@
 
       .meta-attachment {
         color: #475569;
+      }
+
+      .meta-history {
+        color: #0f766e;
+      }
+
+      .busy-note {
+        margin-top: 0.5rem;
+        color: var(--muted);
+        font-size: 0.95rem;
       }
 
       .form-grid {
@@ -555,6 +651,10 @@
           <h1>CATA Email Assistant</h1>
           <p>Lean pilot portal for Gmail ingest, active queue review, and early administrator workflow controls.</p>
         </div>
+        <nav class="hero-nav" aria-label="Primary">
+          <a href="/queue" class="link-button">Queue</a>
+          <a href="/history" class="link-button">History</a>
+        </nav>
       </section>
       {% block content %}{% endblock %}
     </main>
@@ -581,6 +681,31 @@
             const command = button.dataset.editorCommand;
             if (!command) return;
             document.execCommand(command, false);
+          });
+        });
+
+        document.querySelectorAll("[data-draft-form]").forEach((form) => {
+          form.addEventListener("submit", (event) => {
+            const editor = document.querySelector("[data-draft-editor]");
+            const draftInput = form.querySelector("[data-draft-input]");
+            if (editor && draftInput) {
+              draftInput.value = editor.innerHTML.trim();
+            }
+
+            const submitter = event.submitter;
+            if (submitter && submitter.hasAttribute("data-send-button")) {
+              submitter.disabled = true;
+              submitter.dataset.originalLabel = submitter.textContent;
+              submitter.textContent = "Sending...";
+
+              let note = form.querySelector(".busy-note");
+              if (!note) {
+                note = document.createElement("div");
+                note.className = "busy-note";
+                form.appendChild(note);
+              }
+              note.textContent = "Sending test email and refreshing the queue...";
+            }
           });
         });
 

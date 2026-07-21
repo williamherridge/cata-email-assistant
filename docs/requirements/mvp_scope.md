@@ -110,6 +110,7 @@ The MVP must preserve administrator control. Generated response drafts must neve
 - Initial cost target is under $20/month where feasible.
 - Future budget may increase to $200-$300/month if the solution proves valuable.
 - Cost is more important than instant draft generation.
+- Recoverable faults caused by malformed data, stale Gmail references, unexpected user actions, or partial artifact corruption must degrade safely instead of crashing the portal.
 - Draft generation should generally complete within a few minutes.
 - Avoid timer-based portal auto-refresh and repeated expensive queries in MVP.
 - Provide manual portal refresh and show a last refreshed timestamp.

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Application Error | CATA Email Assistant{% endblock %}
+
+{% block content %}
+  <section class="panel" style="max-width: 56rem; margin: 0 auto;">
+    <h2>{{ page_title or "Application Error" }}</h2>
+    <p class="muted">{{ error_message }}</p>
+    <div class="button-row" style="margin-top: 1rem;">
+      <a href="{{ back_href or '/queue' }}" class="link-button">Back to Queue</a>
+    </div>
+  </section>
+{% endblock %}

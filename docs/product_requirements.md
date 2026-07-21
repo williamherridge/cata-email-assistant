@@ -355,6 +355,18 @@ Messages should remain `new` while draft generation is pending or ready. This ke
 - Rules and prompts should be editable without major code changes
 - Taxonomy updates should not require redeploying the entire application where possible
 
+### 9.6 Resilience and error handling
+
+- The application should never crash for recoverable faults caused by malformed data, stale external references, unexpected user interactions, or partial local artifact corruption.
+- Request handlers should return a controlled browser response for recoverable faults instead of surfacing raw server errors.
+- Batch and polling workflows should fail the smallest safe unit of work rather than aborting the full run when one message or artifact is malformed.
+- All local file reads should assume files may be missing, partially written, corrupt, or non-UTF-8.
+- All Gmail and third-party payload parsing should assume incomplete or malformed structures.
+- Caught exceptions must either rollback and re-raise or rollback/log and return a deliberate fallback.
+- Broad exception handling is allowed only at resilience boundaries such as routes, polling loops, and external-service integration boundaries.
+- User-visible errors should avoid implying success when an operation did not complete.
+- Database, filesystem, and external API outages may fail the affected operation, but the application should still degrade as safely as practical.
+
 ## 10. Recommended MVP scope
 
 ### Included
@@ -463,6 +475,7 @@ The architecture phase should explicitly compare low-cost options such as:
 - Gmail polling default: poll every 15 minutes between 7:00 AM and 7:00 PM every day, poll every 2 hours otherwise, and provide a portal `Poll now` button for immediate ingest.
 - OpenAI cost guardrail: use a $10/month MVP soft budget and a $15-$20/month hard cap.
 - AI budget behavior: pause non-essential AI draft generation at the hard cap while preserving Gmail ingest, deterministic rules, queue review, editing, and sending.
+- Error-handling standard: future code must follow the resilience and error-handling rules in section 9.6 and the implementation guidance in `docs/design/error_handling_assessment.md`.
 
 ## 15. Open questions
 

@@ -10,6 +10,9 @@ MAKEUP_LINEUP_CATEGORY = "Make-up match line up"
 TEAM_REGISTRATION_CATEGORY = "Team registration submission"
 REPLY_PREFIXES = ("re:", "fw:", "fwd:")
 MAKEUP_LINEUP_SUBJECT_PREFIX = "make-up match line up from"
+MAKEUP_LINEUP_SENDERS = {
+    "web@site.tennisaustin.org",
+}
 TEAM_REGISTRATION_SENDERS = {
     "no-reply@austintennis.org",
     "leaguecommittee@austintennis.org",
@@ -31,7 +34,6 @@ TEAM_REGISTRATION_REQUIRED_BODY_MARKERS = (
     "captain usta number",
     "registration type",
     "team name",
-    "league ntrp level of play",
 )
 
 
@@ -60,7 +62,7 @@ def classify_makeup_match_lineup(message: Message, body_text: str) -> Classifica
     subject = (message.subject or "").strip()
     subject_lower = subject.casefold()
 
-    if from_address != "no-reply@austintennis.org":
+    if from_address not in MAKEUP_LINEUP_SENDERS:
         return None
     if subject_lower.startswith(REPLY_PREFIXES):
         return None
@@ -98,6 +100,10 @@ def classify_team_registration_submission(message: Message, body_text: str) -> C
 
     normalized_body = body_text.casefold()
     if not all(marker in normalized_body for marker in TEAM_REGISTRATION_REQUIRED_BODY_MARKERS):
+        return None
+    if "league ntrp level of play" not in normalized_body and (
+        "league" not in normalized_body or "ntrp level of play" not in normalized_body
+    ):
         return None
 
     return ClassificationResult(

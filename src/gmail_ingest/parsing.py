@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -198,7 +199,10 @@ def decode_body(data: str | None) -> str:
     if not data:
         return ""
     padding = "=" * (-len(data) % 4)
-    decoded = base64.urlsafe_b64decode(data + padding)
+    try:
+        decoded = base64.urlsafe_b64decode(data + padding)
+    except (ValueError, binascii.Error):
+        return ""
     return decoded.decode("utf-8", errors="replace")
 
 
@@ -252,7 +256,14 @@ def sanitize_email_html(html: str) -> str:
 
 
 def headers_to_dict(headers: list[dict]) -> dict[str, str]:
-    return {header["name"].lower(): header["value"] for header in headers}
+    normalized: dict[str, str] = {}
+    for header in headers:
+        name = header.get("name")
+        value = header.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        normalized[name.lower()] = value
+    return normalized
 
 
 def parse_datetime_header(value: str | None) -> datetime | None:

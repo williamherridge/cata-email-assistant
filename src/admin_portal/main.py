@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 from urllib.parse import urlencode
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from googleapiclient.errors import HttpError
 from sqlalchemy.orm import Session
 
 from src.admin_portal.formatting import (
@@ -25,23 +27,32 @@ from src.workflow.polling import (
     ensure_default_mailbox,
     ensure_runtime_directories,
     get_message_detail,
+    get_ignore_source,
     get_reply_cc_addresses,
     get_reply_to_addresses,
     get_recent_poll_runs,
+    has_prior_sent_reply,
+    list_history_messages,
     list_mailboxes,
     list_queue_messages,
     mark_message_opened,
+    normalize_history_tab,
+    normalize_ignored_scope,
     parse_review_form,
+    parse_send_form,
     parse_return_to,
     poll_mailbox,
     read_body_artifact,
     read_body_html_artifact,
+    read_sent_reply_records,
+    send_reply_message,
     transition_message_status,
     update_message_review,
 )
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=str(settings.templates_dir))
 templates.env.filters["portal_datetime"] = lambda value: format_portal_datetime(value, settings.display_timezone)
 templates.env.filters["portal_datetime_compact"] = lambda value: format_portal_datetime_compact(
@@ -59,6 +70,17 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="CATA Email Assistant", lifespan=lifespan)
+PAGE_ERROR_MESSAGES = {
+    "history_load_failed": "History could not be fully loaded. The app stayed online, but some data could not be read.",
+    "mailbox_poll_failed": "Polling did not complete. The app stayed online, but Gmail or stored data returned an unexpected error.",
+    "message_action_failed": "The requested message action could not be completed. No partial change should be assumed.",
+    "message_detail_failed": "The message detail view could not be loaded. The app stayed online, but some data could not be read.",
+    "message_missing": "That message is no longer available in the current view.",
+    "poll_runs_load_failed": "Recent poll runs could not be fully loaded.",
+    "queue_load_failed": "The queue could not be fully loaded. The app stayed online, but some data could not be read.",
+    "review_save_failed": "Review changes could not be saved.",
+    "send_failed": "Send failed. No response was recorded. Please try again after checking Gmail authorization.",
+}
 
 
 def build_queue_return_path(selected_id: int | None, filter_query: str) -> str:
@@ -70,6 +92,101 @@ def build_queue_return_path(selected_id: int | None, filter_query: str) -> str:
     if not parts:
         return "/queue"
     return f"/queue?{'&'.join(parts)}"
+
+
+def resolve_page_error(code: str | None) -> str:
+    if not code:
+        return ""
+    return PAGE_ERROR_MESSAGES.get(code, "An unexpected application error occurred, but the app remained online.")
+
+
+def rollback_session(session: Session) -> None:
+    try:
+        session.rollback()
+    except Exception:
+        logger.exception("Database rollback failed.")
+
+
+def build_redirect_url(path: str, **params: str) -> str:
+    query = urlencode({key: value for key, value in params.items() if value})
+    if not query:
+        return path
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}{query}"
+
+
+def build_queue_context(request: Request, **overrides):
+    context = {
+        "request": request,
+        "messages": [],
+        "mailboxes": [],
+        "poll_runs": [],
+        "saved": request.query_params.get("saved") == "1",
+        "polled": request.query_params.get("polled") == "1",
+        "sent": request.query_params.get("sent") == "1",
+        "send_error": request.query_params.get("send_error") or "",
+        "page_error": resolve_page_error(request.query_params.get("error")),
+        "selected_message": None,
+        "selected_message_id": None,
+        "reply_to_addresses": "",
+        "reply_cc_addresses": "",
+        "reply_subject": "",
+        "draft_html": "",
+        "selected_sent_reply_records": [],
+        "selected_has_prior_reply": False,
+        "selected_body_text": "",
+        "selected_body_html": "",
+        "return_to_queue": "/queue",
+        "categories": [],
+        "subcategories": [],
+        "filters": {
+            "search": "",
+            "category_id": "",
+            "priority": "",
+            "reply_needed": "",
+        },
+        "filter_query": "",
+    }
+    context.update(overrides)
+    return context
+
+
+def build_history_context(request: Request, **overrides):
+    tab = normalize_history_tab(request.query_params.get("tab"))
+    context = {
+        "request": request,
+        "tab": tab,
+        "messages": [],
+        "selected_message": None,
+        "selected_message_id": None,
+        "search": "",
+        "ignored_scope": normalize_ignored_scope(request.query_params.get("ignored_scope")),
+        "saved": request.query_params.get("saved") == "1",
+        "page_error": resolve_page_error(request.query_params.get("error")),
+        "return_to_history": f"/history?tab={tab}",
+        "sent_reply_records": [],
+        "selected_body_text": "",
+        "selected_body_html": "",
+        "selected_ignore_source": "",
+    }
+    context.update(overrides)
+    return context
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled application error for %s %s", request.method, request.url.path, exc_info=exc)
+    return templates.TemplateResponse(
+        request,
+        name="error.html",
+        context={
+            "request": request,
+            "page_title": "Something went wrong",
+            "error_message": "The application hit an unexpected error, but it stayed online. Please go back and try again.",
+            "back_href": "/queue",
+        },
+        status_code=500,
+    )
 
 
 @app.get("/health")
@@ -84,23 +201,11 @@ def root() -> RedirectResponse:
 
 @app.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request, db: Session = Depends(get_db_session)):
-    ensure_default_mailbox(db, settings)
-    sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
     search_text = (request.query_params.get("search") or "").strip()
     category_raw = request.query_params.get("category_id") or ""
     category_id = int(category_raw) if category_raw.isdigit() else None
     priority = (request.query_params.get("priority") or "").strip().lower()
     reply_needed = (request.query_params.get("reply_needed") or "").strip().lower()
-    messages = list_queue_messages(
-        db,
-        search_text=search_text,
-        category_id=category_id,
-        priority=priority,
-        reply_needed=reply_needed,
-    )
-    selected_message = None
-    selected_message_id = request.query_params.get("selected_message_id")
-    selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
     filter_params = {
         "search": search_text,
         "category_id": category_raw,
@@ -108,80 +213,185 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
         "reply_needed": reply_needed,
     }
     filter_query = urlencode({key: value for key, value in filter_params.items() if value})
-    if messages:
-        available_ids = {message.id for message in messages}
-        if selected_id not in available_ids:
-            selected_id = messages[0].id
-        selected_message = get_message_detail(db, selected_id)
-        if selected_message is not None:
-            mark_message_opened(db, selected_message)
+    selected_message_id = request.query_params.get("selected_message_id")
+    selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
+    try:
+        ensure_default_mailbox(db, settings)
+        sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
+        messages = list_queue_messages(
+            db,
+            search_text=search_text,
+            category_id=category_id,
+            priority=priority,
+            reply_needed=reply_needed,
+        )
+        selected_message = None
+        if messages:
+            available_ids = {message.id for message in messages}
+            if selected_id not in available_ids:
+                selected_id = messages[0].id
+            selected_message = get_message_detail(db, selected_id)
+            if selected_message is not None:
+                mark_message_opened(db, selected_message)
+        return templates.TemplateResponse(
+            request,
+            name="queue.html",
+            context=build_queue_context(
+                request,
+                messages=messages,
+                mailboxes=list_mailboxes(db),
+                poll_runs=get_recent_poll_runs(db),
+                selected_message=selected_message,
+                selected_message_id=selected_id,
+                reply_to_addresses=get_reply_to_addresses(selected_message) if selected_message else "",
+                reply_cc_addresses=get_reply_cc_addresses(selected_message) if selected_message else "",
+                reply_subject=build_reply_subject(selected_message) if selected_message else "",
+                draft_html=build_default_draft_html(selected_message) if selected_message else "",
+                selected_sent_reply_records=read_sent_reply_records(selected_message, settings) if selected_message else [],
+                selected_has_prior_reply=has_prior_sent_reply(selected_message) if selected_message else False,
+                selected_body_text=read_body_artifact(selected_message) if selected_message else "",
+                selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
+                return_to_queue=build_queue_return_path(selected_id, filter_query),
+                categories=list_active_categories(db),
+                subcategories=list_active_subcategories(db),
+                filters=filter_params,
+                filter_query=filter_query,
+            ),
+        )
+    except Exception:
+        rollback_session(db)
+        logger.exception("Queue page load failed.")
+        return templates.TemplateResponse(
+            request,
+            name="queue.html",
+            context=build_queue_context(
+                request,
+                page_error=resolve_page_error("queue_load_failed"),
+                filters=filter_params,
+                filter_query=filter_query,
+            ),
+        )
 
-    return templates.TemplateResponse(
-        request,
-        name="queue.html",
-        context={
-            "request": request,
-            "messages": messages,
-            "mailboxes": list_mailboxes(db),
-            "poll_runs": get_recent_poll_runs(db),
-            "saved": request.query_params.get("saved") == "1",
-            "polled": request.query_params.get("polled") == "1",
-            "selected_message": selected_message,
-            "selected_message_id": selected_id,
-            "reply_to_addresses": get_reply_to_addresses(selected_message) if selected_message else "",
-            "reply_cc_addresses": get_reply_cc_addresses(selected_message) if selected_message else "",
-            "reply_subject": build_reply_subject(selected_message) if selected_message else "",
-            "draft_html": build_default_draft_html(selected_message) if selected_message else "",
-            "selected_body_text": read_body_artifact(selected_message) if selected_message else "",
-            "selected_body_html": read_body_html_artifact(selected_message) if selected_message else "",
-            "return_to_queue": build_queue_return_path(selected_id, filter_query),
-            "categories": list_active_categories(db),
-            "subcategories": list_active_subcategories(db),
-            "filters": {
+
+@app.get("/history", response_class=HTMLResponse)
+def history_page(request: Request, db: Session = Depends(get_db_session)):
+    tab = normalize_history_tab(request.query_params.get("tab"))
+    search_text = (request.query_params.get("search") or "").strip()
+    ignored_scope = normalize_ignored_scope(request.query_params.get("ignored_scope"))
+    filter_query = urlencode(
+        {
+            key: value
+            for key, value in {
+                "tab": tab,
                 "search": search_text,
-                "category_id": category_raw,
-                "priority": priority,
-                "reply_needed": reply_needed,
-            },
-            "filter_query": filter_query,
-        },
+                "ignored_scope": ignored_scope if tab == "ignored" else "",
+            }.items()
+            if value
+        }
     )
+    selected_message_id = request.query_params.get("selected_message_id")
+    selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
+    try:
+        ensure_default_mailbox(db, settings)
+        sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
+        messages = list_history_messages(db, tab=tab, search_text=search_text, ignored_scope=ignored_scope)
+        selected_message = None
+        if messages:
+            available_ids = {message.id for message in messages}
+            if selected_id not in available_ids:
+                selected_id = messages[0].id
+            selected_message = get_message_detail(db, selected_id)
+        return templates.TemplateResponse(
+            request,
+            name="history.html",
+            context=build_history_context(
+                request,
+                tab=tab,
+                messages=messages,
+                selected_message=selected_message,
+                selected_message_id=selected_id,
+                search=search_text,
+                ignored_scope=ignored_scope,
+                return_to_history=f"/history?{filter_query}" if filter_query else "/history",
+                sent_reply_records=read_sent_reply_records(selected_message, settings) if selected_message else [],
+                selected_body_text=read_body_artifact(selected_message) if selected_message else "",
+                selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
+                selected_ignore_source=get_ignore_source(selected_message) if selected_message else "",
+            ),
+        )
+    except Exception:
+        rollback_session(db)
+        logger.exception("History page load failed.")
+        return templates.TemplateResponse(
+            request,
+            name="history.html",
+            context=build_history_context(
+                request,
+                tab=tab,
+                search=search_text,
+                ignored_scope=ignored_scope,
+                page_error=resolve_page_error("history_load_failed"),
+                return_to_history=f"/history?{filter_query}" if filter_query else "/history",
+            ),
+        )
 
 
 @app.get("/poll-runs", response_class=HTMLResponse)
 def poll_runs_page(request: Request, db: Session = Depends(get_db_session)):
-    ensure_default_mailbox(db, settings)
-    return templates.TemplateResponse(
-        request,
-        name="poll_runs.html",
-        context={
-            "request": request,
-            "poll_runs": get_recent_poll_runs(db, limit=50),
-        },
-    )
+    try:
+        ensure_default_mailbox(db, settings)
+        return templates.TemplateResponse(
+            request,
+            name="poll_runs.html",
+            context={
+                "request": request,
+                "poll_runs": get_recent_poll_runs(db, limit=50),
+                "page_error": resolve_page_error(request.query_params.get("error")),
+            },
+        )
+    except Exception:
+        rollback_session(db)
+        logger.exception("Poll-runs page load failed.")
+        return templates.TemplateResponse(
+            request,
+            name="poll_runs.html",
+            context={
+                "request": request,
+                "poll_runs": [],
+                "page_error": resolve_page_error("poll_runs_load_failed"),
+            },
+        )
 
 
 @app.get("/messages/{message_id}", response_class=HTMLResponse)
 def message_detail_page(message_id: int, request: Request, db: Session = Depends(get_db_session)):
-    sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
-    message = get_message_detail(db, message_id)
-    if message is None:
-        raise HTTPException(status_code=404, detail="Message not found.")
-    mark_message_opened(db, message)
-
-    return templates.TemplateResponse(
-        request,
-        name="message_detail.html",
-        context={
-            "request": request,
-            "message": message,
-            "body_text": read_body_artifact(message),
-            "body_html": read_body_html_artifact(message),
-            "saved": request.query_params.get("saved") == "1",
-            "categories": list_active_categories(db),
-            "subcategories": list_active_subcategories(db),
-        },
-    )
+    try:
+        sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
+        message = get_message_detail(db, message_id)
+        if message is None:
+            raise HTTPException(status_code=404, detail="Message not found.")
+        mark_message_opened(db, message)
+        return templates.TemplateResponse(
+            request,
+            name="message_detail.html",
+            context={
+                "request": request,
+                "message": message,
+                "body_text": read_body_artifact(message),
+                "body_html": read_body_html_artifact(message),
+                "saved": request.query_params.get("saved") == "1",
+                "page_error": resolve_page_error(request.query_params.get("error")),
+                "categories": list_active_categories(db),
+                "subcategories": list_active_subcategories(db),
+                "sent_reply_records": read_sent_reply_records(message, settings),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        rollback_session(db)
+        logger.exception("Message detail page failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url("/queue", error="message_detail_failed"), status_code=303)
 
 
 @app.post("/mailboxes/{mailbox_id}/poll")
@@ -189,8 +399,13 @@ def poll_mailbox_action(
     mailbox_id: int,
     db: Session = Depends(get_db_session),
 ):
-    poll_mailbox(db, settings, mailbox_id=mailbox_id, trigger_source="portal")
-    return RedirectResponse(url="/queue?polled=1", status_code=303)
+    try:
+        poll_mailbox(db, settings, mailbox_id=mailbox_id, trigger_source="portal")
+        return RedirectResponse(url="/queue?polled=1", status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Mailbox poll action failed for mailbox %s.", mailbox_id)
+        return RedirectResponse(url=build_redirect_url("/queue", error="mailbox_poll_failed"), status_code=303)
 
 
 @app.post("/messages/{message_id}/review")
@@ -201,40 +416,96 @@ async def update_message_review_action(
 ):
     message = get_message_detail(db, message_id)
     if message is None:
-        raise HTTPException(status_code=404, detail="Message not found.")
+        return RedirectResponse(url=build_redirect_url("/queue", error="message_missing"), status_code=303)
 
     body = await request.body()
-    form_data = parse_review_form(body)
-    return_to = parse_return_to(body, f"/messages/{message_id}?saved=1")
-    update_message_review(db, message_id, **form_data)
-    separator = "&" if "?" in return_to else "?"
-    return RedirectResponse(url=f"{return_to}{separator}saved=1", status_code=303)
+    return_to = parse_return_to(body, f"/messages/{message_id}")
+    try:
+        form_data = parse_review_form(body)
+        update_message_review(db, message_id, **form_data)
+        return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Review update failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="review_save_failed"), status_code=303)
+
+
+@app.post("/messages/{message_id}/send")
+async def send_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
+    message = get_message_detail(db, message_id)
+    if message is None:
+        return RedirectResponse(url=build_redirect_url("/queue", error="message_missing"), status_code=303)
+
+    body = await request.body()
+    return_to = parse_return_to(body, "/queue")
+    try:
+        review_data = parse_review_form(body)
+        send_data = parse_send_form(body)
+        update_message_review(db, message_id, **review_data)
+        send_reply_message(db, settings, message_id, **send_data)
+    except HttpError as exc:
+        rollback_session(db)
+        if exc.resp is not None and exc.resp.status == 403:
+            return RedirectResponse(url=build_redirect_url(return_to, send_error="permissions"), status_code=303)
+        logger.exception("Gmail send failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, send_error="failed"), status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Portal send action failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, send_error="failed"), status_code=303)
+
+    return RedirectResponse(url=build_redirect_url(return_to, sent="1"), status_code=303)
 
 
 @app.post("/messages/{message_id}/ignore")
 async def ignore_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
     message = get_message_detail(db, message_id)
     if message is None:
-        raise HTTPException(status_code=404, detail="Message not found.")
+        return RedirectResponse(url=build_redirect_url("/queue", error="message_missing"), status_code=303)
 
     body = await request.body()
     return_to = parse_return_to(body, "/queue")
-    transition_message_status(db, message_id, "ignored")
-    separator = "&" if "?" in return_to else "?"
-    return RedirectResponse(url=f"{return_to}{separator}saved=1", status_code=303)
+    try:
+        transition_message_status(db, message_id, "ignored")
+        return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Ignore action failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="message_action_failed"), status_code=303)
 
 
 @app.post("/messages/{message_id}/reopen")
 async def reopen_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
     message = get_message_detail(db, message_id)
     if message is None:
-        raise HTTPException(status_code=404, detail="Message not found.")
+        return RedirectResponse(url=build_redirect_url("/queue", error="message_missing"), status_code=303)
 
     body = await request.body()
     return_to = parse_return_to(body, f"/messages/{message_id}")
-    transition_message_status(db, message_id, "new")
-    separator = "&" if "?" in return_to else "?"
-    return RedirectResponse(url=f"{return_to}{separator}saved=1", status_code=303)
+    try:
+        transition_message_status(db, message_id, "new")
+        return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Reopen action failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="message_action_failed"), status_code=303)
+
+
+@app.post("/messages/{message_id}/responded")
+async def responded_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
+    message = get_message_detail(db, message_id)
+    if message is None:
+        return RedirectResponse(url=build_redirect_url("/history", tab="responded", error="message_missing"), status_code=303)
+
+    body = await request.body()
+    return_to = parse_return_to(body, "/history?tab=responded")
+    try:
+        transition_message_status(db, message_id, "responded")
+        return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Return-to-responded action failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="message_action_failed"), status_code=303)
 
 
 if __name__ == "__main__":

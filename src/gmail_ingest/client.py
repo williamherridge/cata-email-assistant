@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
+from email.message import EmailMessage
 
 from src.gmail_ingest.auth import get_gmail_service
 from src.shared.config import Settings
@@ -79,3 +81,37 @@ class GmailClient:
 
     def get_message(self, message_id: str) -> dict:
         return self.service.users().messages().get(userId="me", id=message_id, format="full").execute()
+
+    def get_thread(self, thread_id: str) -> dict:
+        return self.service.users().threads().get(userId="me", id=thread_id, format="full").execute()
+
+    def send_message(
+        self,
+        *,
+        to_addresses: list[str],
+        cc_addresses: list[str],
+        subject: str,
+        html_body: str,
+        thread_id: str | None = None,
+        in_reply_to: str | None = None,
+        references: str | None = None,
+    ) -> dict:
+        message = EmailMessage()
+        message["To"] = ", ".join(to_addresses)
+        if cc_addresses:
+            message["Cc"] = ", ".join(cc_addresses)
+        message["Subject"] = subject
+        if in_reply_to:
+            message["In-Reply-To"] = in_reply_to
+        if references:
+            message["References"] = references
+        message.set_content("This message contains an HTML reply.")
+        message.add_alternative(html_body, subtype="html")
+
+        payload = {
+            "raw": base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8"),
+        }
+        if thread_id:
+            payload["threadId"] = thread_id
+
+        return self.service.users().messages().send(userId="me", body=payload).execute()

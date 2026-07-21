@@ -5,6 +5,9 @@
 {% block content %}
   <section class="grid" style="gap: 1rem;">
     <div class="panel">
+      {% if page_error %}
+        <div class="notice">{{ page_error }}</div>
+      {% endif %}
       {% if saved %}
         <div class="notice">Review changes were saved.</div>
       {% endif %}

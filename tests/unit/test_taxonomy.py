@@ -61,3 +61,14 @@ def test_sync_taxonomy_catalog_normalizes_and_excludes_labels(tmp_path: Path):
     assert makeup.default_reply_needed is False
     assert makeup.default_informational_only is True
     assert makeup.priority_hint == "low"
+
+
+def test_sync_taxonomy_catalog_ignores_invalid_json(tmp_path: Path):
+    session = make_session()
+    catalog_path = tmp_path / "taxonomy_catalog.json"
+    catalog_path.write_text("{not valid json", encoding="utf-8")
+
+    added = sync_taxonomy_catalog(session, catalog_path)
+
+    assert added == 0
+    assert list(session.scalars(select(Category))) == []

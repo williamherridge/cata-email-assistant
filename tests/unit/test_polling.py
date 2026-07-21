@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
 
+from googleapiclient.errors import HttpError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from src.shared.database import Base
-from src.shared.models import Category, Mailbox, Message, MessageArtifact, MessageThread, PollRun, WorkItem
+from src.shared.models import AuditEvent, Category, Mailbox, Message, MessageArtifact, MessageThread, PollRun, WorkItem
 from src.workflow import polling
 
 
@@ -72,7 +73,7 @@ class FakeMakeupLineupGmailClient:
                 "mimeType": "multipart/alternative",
                 "headers": [
                     {"name": "Subject", "value": "Make-Up Match Line Up from Amy Saunders"},
-                    {"name": "From", "value": "CATA <no-reply@austintennis.org>"},
+                    {"name": "From", "value": "Tennis Austin <web@site.tennisaustin.org>"},
                     {"name": "To", "value": "pilot@cata.test"},
                     {"name": "Date", "value": "Fri, 19 Jul 2024 10:00:00 -0500"},
                     {"name": "Message-Id", "value": "<msg-2@example.com>"},
@@ -180,6 +181,125 @@ class FakeProfileOnlyGmailClient:
 
     def get_profile(self):
         return {"emailAddress": "discovered@cata.test", "historyId": "222"}
+
+
+class FakeDirectGmailReplyClient:
+    def __init__(self, _settings):
+        pass
+
+    def get_profile(self):
+        return {"emailAddress": "pilot@cata.test", "historyId": "666"}
+
+    def discover_message_ids(self, _since_history_id):
+        return type("Discovery", (), {"history_id": "666", "message_ids": ["sent-externally-1"]})()
+
+    def get_message(self, _message_id):
+        return {
+            "id": "sent-externally-1",
+            "threadId": "thread-direct-reply",
+            "historyId": "666",
+            "internalDate": "1784583212000",
+            "snippet": "Thanks for reaching out. Here is the update.",
+            "payload": {
+                "mimeType": "multipart/alternative",
+                "headers": [
+                    {"name": "Subject", "value": "Re: Registration question"},
+                    {"name": "From", "value": "Pilot Inbox <pilot@cata.test>"},
+                    {"name": "To", "value": "parent@example.com"},
+                    {"name": "Date", "value": "Mon, 20 Jul 2026 4:00:00 -0500"},
+                    {"name": "Message-Id", "value": "<sent-externally-1@example.com>"},
+                ],
+                "parts": [
+                    {
+                        "mimeType": "text/html",
+                        "body": {"data": "PGRpdj48cD5UaGFua3MgZm9yIHJlYWNoaW5nIG91dC4gSGVyZSBpcyB0aGUgdXBkYXRlLjwvcD48L2Rpdj4="},
+                    }
+                ],
+            },
+        }
+
+
+class FakeMissingMessageGmailClient:
+    def __init__(self, _settings):
+        pass
+
+    def get_profile(self):
+        return {"emailAddress": "pilot@cata.test", "historyId": "777"}
+
+    def discover_message_ids(self, _since_history_id):
+        return type("Discovery", (), {"history_id": "777", "message_ids": ["missing-1"]})()
+
+    def get_message(self, _message_id):
+        response = type("Resp", (), {"status": 404, "reason": "Not Found"})()
+        raise HttpError(response, b'{"error":{"message":"Requested entity was not found."}}')
+
+
+class FakeMalformedMessageGmailClient:
+    def __init__(self, _settings):
+        pass
+
+    def get_profile(self):
+        return {"emailAddress": "pilot@cata.test", "historyId": "888"}
+
+    def discover_message_ids(self, _since_history_id):
+        return type("Discovery", (), {"history_id": "888", "message_ids": ["bad-1"]})()
+
+    def get_message(self, _message_id):
+        return {
+            "id": "bad-1",
+            "historyId": "888",
+            "payload": {
+                "mimeType": "multipart/alternative",
+                "headers": [
+                    {"name": "Subject", "value": "Broken payload"},
+                    {"name": "From", "value": "Sender <sender@example.com>"},
+                ],
+            },
+        }
+
+
+class FakeThreadFallbackGmailClient:
+    def __init__(self, _settings):
+        pass
+
+    def get_thread(self, _thread_id):
+        return {
+            "id": "thread-9",
+            "messages": [
+                {
+                    "id": "incoming-1",
+                    "threadId": "thread-9",
+                    "internalDate": "1784579612000",
+                    "payload": {
+                        "mimeType": "multipart/alternative",
+                        "headers": [
+                            {"name": "Subject", "value": "Question about lineup"},
+                            {"name": "From", "value": "Parent Example <parent@example.com>"},
+                            {"name": "To", "value": "pilot@cata.test"},
+                            {"name": "Date", "value": "Mon, 20 Jul 2026 3:00:00 -0500"},
+                        ],
+                    },
+                },
+                {
+                    "id": "sent-1",
+                    "threadId": "thread-9",
+                    "internalDate": "1784583212000",
+                    "payload": {
+                        "mimeType": "text/html",
+                        "headers": [
+                            {"name": "Subject", "value": "Re: Question about lineup"},
+                            {"name": "From", "value": "Pilot Inbox <pilot@cata.test>"},
+                            {"name": "To", "value": "parent@example.com"},
+                            {"name": "Cc", "value": "league@example.com"},
+                            {"name": "Date", "value": "Mon, 20 Jul 2026 4:00:00 -0500"},
+                        ],
+                        "body": {
+                            "data": "PGRpdj48cD5SZXBseSBoaXN0b3J5IGZhbGxiYWNrPC9wPjwvZGl2Pg=="
+                        },
+                    },
+                },
+            ],
+        }
 
 
 def make_session() -> Session:
@@ -354,6 +474,185 @@ def test_team_registration_auto_classifies_and_builds_manual_summary(monkeypatch
     assert "Anderson High School" in summary_html
 
 
+def test_team_registration_auto_classifies_when_league_and_level_are_split(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(
+        mailbox_id=mailbox.id,
+        gmail_thread_id="thread-split-registration",
+        subject_canonical="New Fall Team Registration from Melissa RabeauxKnock The Fuzz Off",
+    )
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-split-registration",
+        subject="New Fall Team Registration from Melissa RabeauxKnock The Fuzz Off",
+        from_display="'Tennis Austin' via Leagues",
+        from_address="leaguecommittee@austintennis.org",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    body_path = tmp_path / "split-registration.txt"
+    body_path.write_text(
+        "Date\n\n07/20/2026\n\n"
+        "Captain Name\n\nMelissa Rabeaux\n\n"
+        "Captain USTA Number\n\n2028183498\n\n"
+        "Registration Type\n\nClosed but Seeking (People can contact you to join your team)\n\n"
+        "Email\n\nmrabeaux@austin.rr.com\n\n"
+        "Team Name\n\nKnock The Fuzz Off\n\n"
+        "Gender/Day\n\nWomens WeekDAY\n\n"
+        "League\n\nFALL 18+ League\n\n"
+        "NTRP Level of Play\n\n3.5 League\n",
+        encoding="utf-8",
+    )
+    session.add(
+        MessageArtifact(
+            message_id=message.id,
+            artifact_type="normalized_body_text",
+            storage_uri=str(body_path),
+        )
+    )
+    session.commit()
+
+    refreshed_message = polling.get_message_detail(session, message.id)
+    assert refreshed_message is not None
+
+    result = polling.classify_message_deterministically(refreshed_message, polling.read_body_artifact(refreshed_message))
+
+    assert result is not None
+    assert result.category_name == "Team registration submission"
+    assert result.reply_needed is False
+    assert result.informational_only is False
+    assert result.priority == "normal"
+
+
+def test_poll_mailbox_syncs_reply_sent_directly_in_gmail(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(
+        mailbox_id=mailbox.id,
+        gmail_thread_id="thread-direct-reply",
+        subject_canonical="Registration question",
+    )
+    session.add(thread)
+    session.flush()
+
+    inbound = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="incoming-1",
+        subject="Registration question",
+        from_display="Parent Example",
+        from_address="parent@example.com",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(inbound)
+    session.commit()
+
+    monkeypatch.setattr(polling, "GmailClient", FakeDirectGmailReplyClient)
+
+    polling.poll_mailbox(session, settings, mailbox.id)
+
+    session.expire_all()
+    refreshed_inbound = session.get(Message, inbound.id)
+    assert refreshed_inbound is not None
+    assert refreshed_inbound.status == "responded"
+    assert refreshed_inbound.responded_at is not None
+    assert refreshed_inbound.latest_sent_reply_id is not None
+
+    detailed_inbound = polling.get_message_detail(session, inbound.id)
+    assert detailed_inbound is not None
+    sent_replies = polling.read_sent_reply_records(detailed_inbound, settings)
+    assert len(sent_replies) == 1
+    assert "Thanks for reaching out" in sent_replies[0].html
+    assert sent_replies[0].metadata["delivery_rule"] == "gmail_direct_reply_sync"
+    assert sent_replies[0].metadata["source_gmail_message_id"] == "sent-externally-1"
+
+    synced_event_types = list(
+        session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == inbound.id))
+    )
+    assert "message_reply_synced_from_gmail" in synced_event_types
+
+
+def test_poll_mailbox_skips_missing_gmail_messages(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.commit()
+
+    monkeypatch.setattr(polling, "GmailClient", FakeMissingMessageGmailClient)
+
+    outcome = polling.poll_mailbox(session, settings, mailbox.id)
+
+    assert outcome.messages_discovered == 1
+    assert outcome.messages_persisted == 0
+
+    poll_run = session.scalar(select(PollRun))
+    assert poll_run is not None
+    assert poll_run.status == "completed"
+
+    work_items = session.scalars(select(WorkItem).order_by(WorkItem.id)).all()
+    assert len(work_items) == 1
+    assert work_items[0].work_type == "ingest_message"
+    assert work_items[0].status == "cancelled"
+    assert work_items[0].error_summary == "Gmail message no longer exists."
+
+    messages = session.scalars(select(Message)).all()
+    assert messages == []
+
+    audit_events = session.scalars(
+        select(AuditEvent).where(AuditEvent.event_type == "message_missing_from_gmail")
+    ).all()
+    assert len(audit_events) == 1
+    assert "missing-1" in audit_events[0].summary
+
+
+def test_poll_mailbox_skips_malformed_gmail_payloads(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.commit()
+
+    monkeypatch.setattr(polling, "GmailClient", FakeMalformedMessageGmailClient)
+
+    outcome = polling.poll_mailbox(session, settings, mailbox.id)
+
+    assert outcome.messages_discovered == 1
+    assert outcome.messages_persisted == 0
+
+    work_items = session.scalars(select(WorkItem).order_by(WorkItem.id)).all()
+    assert len(work_items) == 1
+    assert work_items[0].status == "failed"
+    assert work_items[0].error_summary == "Unexpected message payload or artifact failure during ingest."
+
+    audit_events = session.scalars(
+        select(AuditEvent).where(AuditEvent.event_type == "message_ingest_failed")
+    ).all()
+    assert len(audit_events) == 1
+    assert "bad-1" in audit_events[0].summary
+
+
 def test_parse_team_registration_fields_handles_home_courts_contact_variants():
     body_text = (
         "New Fall Team Registration from Adeena ReitbergerAll Set! Date 07/19/2026 "
@@ -455,3 +754,96 @@ def test_read_body_html_artifact_falls_back_to_raw_gmail_message(tmp_path):
     assert "<p>First line</p>" in rendered
     assert "<p>Second line</p>" in rendered
     assert "script" not in rendered
+
+
+def test_read_sent_reply_records_falls_back_to_gmail_thread(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(mailbox_id=mailbox.id, gmail_thread_id="thread-9", subject_canonical="Question about lineup")
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-9",
+        subject="Question about lineup",
+        from_address="parent@example.com",
+        status="new",
+        draft_state="ready",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.commit()
+
+    detailed_message = polling.get_message_detail(session, message.id)
+    assert detailed_message is not None
+
+    monkeypatch.setattr(polling, "GmailClient", FakeThreadFallbackGmailClient)
+
+    records = polling.read_sent_reply_records(detailed_message, settings)
+
+    assert len(records) == 1
+    assert "Reply history fallback" in records[0].html
+    assert records[0].metadata["subject"] == "Re: Question about lineup"
+    assert records[0].metadata["effective_to"] == ["parent@example.com"]
+    assert records[0].metadata["effective_cc"] == ["league@example.com"]
+    assert records[0].metadata["delivery_rule"] == "gmail_thread_fallback"
+
+
+def test_build_outbound_reply_html_reuses_prior_reply_history_without_duplicating_original(tmp_path):
+    session = make_session()
+
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(mailbox_id=mailbox.id, gmail_thread_id="thread-10", subject_canonical="Question")
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-10",
+        subject="Question",
+        from_display="Parent Example",
+        from_address="parent@example.com",
+        status="new",
+        draft_state="ready",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    body_path = tmp_path / "message-body.html"
+    body_path.write_text("<div><p>Original email body</p></div>", encoding="utf-8")
+    session.add(
+        MessageArtifact(
+            message_id=message.id,
+            artifact_type="sanitized_body_html",
+            storage_uri=str(body_path),
+        )
+    )
+    session.commit()
+
+    prior_reply = polling.SentReplyRecord(
+        html="<div><p>First sent reply</p></div><hr><div><strong>Original message</strong></div><div><p>Original email body</p></div>",
+        metadata={"subject": "Re: Question"},
+        created_at=None,
+    )
+
+    outbound = polling.build_outbound_reply_html(message, "<p>Newest reply</p>", [prior_reply])
+
+    assert "Newest reply" in outbound
+    assert "Previous reply" in outbound
+    assert "First sent reply" in outbound
+    assert outbound.count("Original message") == 1
+    assert outbound.count("Original email body") == 1

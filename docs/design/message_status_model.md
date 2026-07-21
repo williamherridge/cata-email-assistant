@@ -25,7 +25,7 @@ This avoids making a message look processed simply because the system is still d
 - The default queue hides sent replies.
 - The default queue hides messages with status `responded`.
 - The default queue hides messages with status `ignored`.
-- Filters can expose responded messages, ignored messages, and sent replies when needed.
+- Historical review happens on a separate `History` screen instead of overloading the active queue.
 
 ## UI implications
 
@@ -34,3 +34,5 @@ This avoids making a message look processed simply because the system is still d
 - A message can be `new` and have draft state `ready`.
 - The administrator should have a clear `Ignore` action.
 - Sending a reply through the application should set status to `responded`.
+- Reopening a responded message should return it to `new` without losing prior sent-reply history.
+- Reopened previously responded messages should also have a `Return to Responded` path when the administrator decides no additional follow-up is needed.

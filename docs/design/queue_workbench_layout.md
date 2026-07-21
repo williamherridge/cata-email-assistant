@@ -56,6 +56,7 @@ Current screen decisions:
   - yesterday: `Yesterday`
   - older: short date
 - limit `From` and `Subject` to two visible lines with truncation
+- if a reopened message was previously responded to, show a compact sent-history indicator in the metadata icon cluster
 
 ## Right Pane
 
@@ -77,6 +78,7 @@ Include:
 - reply-needed
 - informational-only flag
 - action buttons such as save review and ignore
+- when a reopened message has prior reply history, include a `Return to Responded` action alongside the active-queue actions
 
 ### Middle Panel
 
@@ -87,10 +89,13 @@ It should be a large draft composition surface with:
 - rich text formatting controls
 - a default signature at the bottom
 - future save / regenerate / send behavior
+- outbound send behavior that appends prior sent reply history and the original inbound message below the newly authored reply
 
 ### Bottom Panel
 
 Display the original email body in a lower-priority scrollable surface.
+
+If a selected `new` message has prior sent-reply history, insert a read-only `Previous Reply Sent` panel above the original email panel.
 
 ## Priority Model
 
@@ -114,3 +119,4 @@ Visual treatment:
 - regenerate flow
 - send flow
 - richer category pills or badges when the queue earns them through usability testing
+- dedicated `History` screen for responded and ignored messages

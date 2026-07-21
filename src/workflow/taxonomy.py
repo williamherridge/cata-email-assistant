@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from sqlalchemy import select
@@ -30,6 +31,7 @@ CATEGORY_PROFILES = {
         "priority_hint": "normal",
     },
 }
+logger = logging.getLogger(__name__)
 
 
 def normalize_catalog_category_name(name: str) -> str | None:
@@ -59,7 +61,11 @@ def sync_taxonomy_catalog(session: Session, catalog_path: Path) -> int:
     if not catalog_path.exists():
         return 0
 
-    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        logger.exception("Taxonomy catalog could not be loaded from %s.", catalog_path)
+        return 0
     existing = {name.casefold() for name in session.scalars(select(Category.name))}
     added = 0
     changed = False

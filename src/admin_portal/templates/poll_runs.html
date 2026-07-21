@@ -11,6 +11,10 @@
       </div>
     </div>
 
+    {% if page_error %}
+      <div class="notice">{{ page_error }}</div>
+    {% endif %}
+
     {% if poll_runs %}
       <table>
         <thead>
