@@ -7,6 +7,7 @@ from googleapiclient.errors import HttpError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from src.google_workspace.sheets import DuplicateRecipientRow
 from src.shared.database import Base
 from src.shared.models import AuditEvent, Category, Mailbox, Message, MessageArtifact, MessageThread, PollRun, WorkItem
 from src.workflow import polling
@@ -46,6 +47,36 @@ class FakeGmailClient:
                 ],
             },
         }
+
+
+class FakeSendGmailClient:
+    sent_messages: list[dict] = []
+
+    def __init__(self, _settings):
+        pass
+
+    def send_message(
+        self,
+        *,
+        to_addresses: list[str],
+        cc_addresses: list[str],
+        subject: str,
+        html_body: str,
+        thread_id: str | None = None,
+        in_reply_to: str | None = None,
+        references: str | None = None,
+    ):
+        payload = {
+            "to_addresses": to_addresses,
+            "cc_addresses": cc_addresses,
+            "subject": subject,
+            "html_body": html_body,
+            "thread_id": thread_id,
+            "in_reply_to": in_reply_to,
+            "references": references,
+        }
+        self.__class__.sent_messages.append(payload)
+        return {"id": f"sent-{len(self.__class__.sent_messages)}"}
 
 
 class FakeMakeupLineupGmailClient:
@@ -177,6 +208,33 @@ class FakeTeamRegistrationGmailClient:
         }
 
 
+class FakeTeamRegistrationAlertGmailClient(FakeTeamRegistrationGmailClient):
+    sent_messages: list[dict] = []
+
+    def send_message(
+        self,
+        *,
+        to_addresses: list[str],
+        cc_addresses: list[str],
+        subject: str,
+        html_body: str,
+        thread_id: str | None = None,
+        in_reply_to: str | None = None,
+        references: str | None = None,
+    ):
+        payload = {
+            "to_addresses": to_addresses,
+            "cc_addresses": cc_addresses,
+            "subject": subject,
+            "html_body": html_body,
+            "thread_id": thread_id,
+            "in_reply_to": in_reply_to,
+            "references": references,
+        }
+        self.__class__.sent_messages.append(payload)
+        return {"id": f"sent-{len(self.__class__.sent_messages)}"}
+
+
 class FakeProfileOnlyGmailClient:
     def __init__(self, _settings):
         pass
@@ -219,6 +277,23 @@ class FakeDirectGmailReplyClient:
                 ],
             },
         }
+
+
+class FakeTeamRegistrationSheetsClient:
+    duplicate_row = None
+    appended_rows = []
+
+    def __init__(self, _settings):
+        pass
+
+    def find_duplicate_row(self, *, team_name: str, captain_name: str, league_value: str):
+        if self.duplicate_row is not None:
+            return self.duplicate_row
+        return None
+
+    def append_team_registration_row(self, row: dict[str, str]) -> int:
+        self.appended_rows.append(row)
+        return 42
 
 
 class FakeMissingMessageGmailClient:
@@ -319,6 +394,7 @@ def make_settings(tmp_path: Path):
                 "updated_at": "2026-07-20T00:00:00",
                 "categories": [
                     {"name": "Make-up match line up"},
+                    {"name": "Ineligible League Player Form"},
                     {"name": "Team registration submission"},
                     {"name": "Facility Request", "subcategories": ["UT-W"]},
                 ],
@@ -339,10 +415,13 @@ def make_settings(tmp_path: Path):
             "gmail_oauth_token_path": Path("config/token.json"),
             "gmail_initial_sync_days": 30,
             "gmail_initial_sync_max_results": 50,
+            "gmail_test_send_override": "william@theherridges.com",
             "gmail_poll_day_start_hour": 7,
             "gmail_poll_day_end_hour": 19,
             "gmail_poll_day_interval_minutes": 15,
             "gmail_poll_offhours_interval_minutes": 120,
+            "team_registration_spreadsheet_id": "",
+            "team_registration_sheet_name": "RecipientList",
             "taxonomy_catalog_path": taxonomy_catalog_path,
             "resolved_artifact_root": tmp_path / "artifacts",
             "resolved_database_url": f"sqlite:///{tmp_path / 'test.db'}",
@@ -480,9 +559,48 @@ def test_team_registration_auto_classifies_and_builds_manual_summary(monkeypatch
     assert "Closed but Seeking" in summary_html
     assert "jameswarnerlay@gmail.com" in summary_html
     assert "TBD" in summary_html
-    assert "Mens Weekend League FALL 18+" in summary_html
+    assert "Mens Weekend" in summary_html
     assert "3.5" in summary_html
     assert "Anderson High School" in summary_html
+    assert "Yes" in summary_html
+
+
+def test_parse_team_registration_record_handles_permission_and_registration_type():
+    body_text = (
+        "Date 07/22/2026 "
+        "Captain Name Rory Reeve "
+        "Captain USTA Number 921392574 "
+        "Registration Type Closed but Seeking (People can contact you to join your team) "
+        "Captains Note for Potential Players (Closed but seeking or Open) "
+        "Home matches at GTC (Georgetown Tennis Center) is 1pm not 12m. "
+        "Phone 7373334595 "
+        "Email rory.reeve@gmail.com "
+        "Team Name Tennis Baggage 4.0 "
+        "Gender/Day Mens Weekend "
+        "League FALL 18+ League "
+        "NTRP Level of Play 4.0 League "
+        "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility) "
+        "Georgetown Tennis Center "
+        "Home Courts Contact (the name of the person who has given you written permission to use their courts) Liliana Borrego "
+        "Home Courts Contact Phone 512-931-2444 "
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts) No "
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts) No"
+    )
+
+    record = polling.parse_team_registration_record(body_text)
+
+    assert record is not None
+    assert record.captain_name == "Rory Reeve"
+    assert record.captain_usta_number == "921392574"
+    assert record.registration_type == "Closed but Seeking"
+    assert record.captain_email == "rory.reeve@gmail.com"
+    assert record.team_name == "Tennis Baggage 4.0"
+    assert record.gender_day == "Mens Weekend"
+    assert record.league_name == "FALL 18+ League"
+    assert record.level == "4.0"
+    assert record.facility == "Georgetown Tennis Center"
+    assert record.permission_to_use_courts == "No"
+    assert record.combined_league_value == "Mens Weekend - 4.0 - FALL 18+ League"
 
 
 def test_team_registration_auto_classifies_when_league_and_level_are_split(monkeypatch, tmp_path):
@@ -549,6 +667,264 @@ def test_team_registration_auto_classifies_when_league_and_level_are_split(monke
     assert result.priority == "normal"
 
 
+def test_team_registration_workflow_appends_row_and_marks_processed(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    settings.team_registration_spreadsheet_id = "sheet-123"
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.commit()
+
+    FakeTeamRegistrationSheetsClient.appended_rows = []
+    FakeTeamRegistrationSheetsClient.duplicate_row = None
+
+    monkeypatch.setattr(polling, "GmailClient", FakeTeamRegistrationGmailClient)
+    monkeypatch.setattr(polling, "TeamRegistrationRecipientListClient", FakeTeamRegistrationSheetsClient)
+
+    polling.poll_mailbox(session, settings, mailbox.id)
+
+    message = session.scalar(select(Message).where(Message.gmail_message_id == "msg-4"))
+    assert message is not None
+    assert message.status == "processed"
+    assert message.reply_needed is False
+    assert len(FakeTeamRegistrationSheetsClient.appended_rows) == 1
+    appended = FakeTeamRegistrationSheetsClient.appended_rows[0]
+    assert appended["Team Name"] == "TBD"
+    assert appended["Captain(s)"] == "Jamie Lay"
+    assert appended["Email Provided"] == "jameswarnerlay@gmail.com"
+    assert appended["Captain USTA Number"] == "11413470"
+    assert appended["League"] == "Mens Weekend - 3.5 - FALL 18+ League"
+    assert appended["Subject"] == appended["League"]
+    assert appended["Registration Type"] == "Closed but Seeking"
+    assert appended["Facility"] == "Anderson High School"
+    assert appended["SourceMessageId"] == str(message.id)
+    assert appended["IngestedAt"]
+
+    event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
+    assert "team_registration_sheet_row_inserted" in event_types
+
+
+def test_team_registration_workflow_saves_blocked_facility_draft(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    settings.team_registration_spreadsheet_id = "sheet-123"
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(
+        mailbox_id=mailbox.id,
+        gmail_thread_id="thread-blocked-registration",
+        subject_canonical="New Fall Team Registration from Rory ReeveTennis Baggage 4.0",
+    )
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-blocked-registration",
+        subject="New Fall Team Registration from Rory ReeveTennis Baggage 4.0",
+        from_display="CATA",
+        from_address="no-reply@austintennis.org",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    body_path = tmp_path / "blocked-registration.txt"
+    body_path.write_text(
+        "Date 07/22/2026 "
+        "Captain Name Rory Reeve "
+        "Captain USTA Number 921392574 "
+        "Registration Type Closed but Seeking (People can contact you to join your team) "
+        "Phone 7373334595 "
+        "Email rory.reeve@gmail.com "
+        "Team Name Tennis Baggage 4.0 "
+        "Gender/Day Mens Weekend "
+        "League FALL 18+ League "
+        "NTRP Level of Play 4.0 League "
+        "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility) Georgetown Tennis Center "
+        "Home Courts Contact (the name of the person who has given you written permission to use their courts) Liliana Borrego "
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts) No",
+        encoding="utf-8",
+    )
+    session.add(
+        MessageArtifact(
+            message_id=message.id,
+            artifact_type="normalized_body_text",
+            storage_uri=str(body_path),
+        )
+    )
+    session.add(
+        Category(
+            name="Team registration submission",
+            is_active=True,
+            default_reply_needed=False,
+            default_informational_only=False,
+            priority_hint="normal",
+        )
+    )
+    session.commit()
+
+    refreshed = polling.get_message_detail(session, message.id)
+    assert refreshed is not None
+
+    monkeypatch.setattr(polling, "TeamRegistrationRecipientListClient", FakeTeamRegistrationSheetsClient)
+
+    polling.apply_deterministic_classification(session, refreshed)
+    polling.run_post_classification_workflows(session, settings, refreshed)
+    session.commit()
+    session.expire_all()
+
+    blocked = polling.get_message_detail(session, message.id)
+    assert blocked is not None
+    assert blocked.status == "new"
+    assert blocked.priority == "high"
+    assert blocked.reply_needed is True
+    assert blocked.draft_state == "ready"
+
+    saved = polling.read_saved_draft_record(blocked)
+    assert saved is not None
+    assert saved["draft_to"] == "rory.reeve@gmail.com"
+    assert saved["draft_cc"] == "pilot@cata.test"
+    assert "Hi Rory," in str(saved.get("draft_html", ""))
+    assert "Thank you,</p><p style=\"margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;\"><br></p>" in str(saved.get("draft_html", ""))
+    assert "cannot be registered until you have permission for the facility" in str(saved.get("draft_html", ""))
+    assert "Casey Herridge" in str(saved.get("draft_html", ""))
+    assert "data:image/webp;base64" in str(saved.get("draft_html", ""))
+
+
+def test_regenerate_message_draft_rebuilds_blocked_team_registration(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    settings.team_registration_spreadsheet_id = "sheet-123"
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(
+        mailbox_id=mailbox.id,
+        gmail_thread_id="thread-regenerate-blocked-registration",
+        subject_canonical="New Fall Team Registration from William HerridgeBanditos",
+    )
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-regenerate-blocked-registration",
+        subject="New Fall Team Registration from William HerridgeBanditos",
+        from_display="League Committee",
+        from_address="leaguecommittee@austintennis.org",
+        status="new",
+        draft_state="ready",
+        priority="high",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    body_path = tmp_path / "regenerate-blocked-registration.txt"
+    body_path.write_text(
+        "Date 07/22/2026 "
+        "Captain Name William Herridge "
+        "Captain USTA Number 1234567 "
+        "Registration Type Closed Team (only those you give team number to can join) "
+        "Phone 210-289-7664 "
+        "Email william@theherridges.com "
+        "Team Name Banditos "
+        "Gender/Day Mens Weekend "
+        "League FALL 18+ League "
+        "NTRP Level of Play 3.5 League "
+        "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility) Austin Country Club "
+        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts) No",
+        encoding="utf-8",
+    )
+    session.add(
+        MessageArtifact(
+            message_id=message.id,
+            artifact_type="normalized_body_text",
+            storage_uri=str(body_path),
+        )
+    )
+    category = Category(
+        name="Team registration submission",
+        is_active=True,
+        default_reply_needed=False,
+        default_informational_only=False,
+        priority_hint="normal",
+    )
+    session.add(category)
+    session.flush()
+    message.assigned_category_id = category.id
+    session.commit()
+
+    polling.save_message_draft(
+        session,
+        settings,
+        message.id,
+        draft_to="wrong@example.com",
+        draft_cc="other@example.com",
+        draft_subject="Wrong subject",
+        draft_html="<p>Old draft</p>",
+    )
+
+    regenerated = polling.regenerate_message_draft(session, settings, message.id)
+
+    saved = polling.read_saved_draft_record(regenerated)
+    assert saved is not None
+    assert saved["draft_to"] == "william@theherridges.com"
+    assert saved["draft_cc"] == "pilot@cata.test"
+    assert saved["draft_subject"] == "Re: New Fall Team Registration from William HerridgeBanditos"
+    assert "Hi William," in str(saved.get("draft_html", ""))
+    assert "Austin Country Club" in str(saved.get("draft_html", ""))
+    assert "Casey Herridge" in str(saved.get("draft_html", ""))
+
+    event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
+    assert "message_draft_regenerated" in event_types
+
+
+def test_team_registration_workflow_sends_duplicate_alert(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    settings.team_registration_spreadsheet_id = "sheet-123"
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.commit()
+
+    FakeTeamRegistrationSheetsClient.appended_rows = []
+    FakeTeamRegistrationSheetsClient.duplicate_row = DuplicateRecipientRow(
+        row_number=15,
+        row_data={
+            "Team Name": "TBD",
+            "Captain(s)": "Jamie Lay",
+            "League": "Mens Weekend - 3.5 - FALL 18+ League",
+        },
+    )
+
+    monkeypatch.setattr(polling, "GmailClient", FakeTeamRegistrationAlertGmailClient)
+    monkeypatch.setattr(polling, "TeamRegistrationRecipientListClient", FakeTeamRegistrationSheetsClient)
+    FakeTeamRegistrationAlertGmailClient.sent_messages.clear()
+
+    polling.poll_mailbox(session, settings, mailbox.id)
+
+    message = session.scalar(select(Message).where(Message.gmail_message_id == "msg-4"))
+    assert message is not None
+    assert message.status == "new"
+    assert message.priority == "high"
+    assert FakeTeamRegistrationSheetsClient.appended_rows == []
+    assert len(FakeTeamRegistrationAlertGmailClient.sent_messages) == 1
+    duplicate_notice = FakeTeamRegistrationAlertGmailClient.sent_messages[0]
+    assert duplicate_notice["subject"] == "Duplicate team registration needs review: TBD"
+    assert duplicate_notice["to_addresses"] == ["william@theherridges.com"]
+    assert "Existing RecipientList row" in duplicate_notice["html_body"]
+
+
 def test_utw_facility_request_auto_classifies_and_auto_ignores(tmp_path):
     session = make_session()
     settings = make_settings(tmp_path)
@@ -606,6 +982,72 @@ def test_utw_facility_request_auto_classifies_and_auto_ignores(tmp_path):
     assert classified.assigned_category.name == "Facility Request"
     assert classified.assigned_subcategory is not None
     assert classified.assigned_subcategory.name == "UT-W"
+    assert classified.reply_needed is False
+    assert classified.informational_only is True
+    assert classified.priority == "low"
+    assert classified.status == "ignored"
+    assert classified.ignored_at is not None
+
+    event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
+    assert "message_auto_classified" in event_types
+    assert "message_ignored" in event_types
+
+
+def test_ineligible_league_player_form_auto_classifies_and_auto_ignores(tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    polling.sync_taxonomy_catalog(session, settings.taxonomy_catalog_path)
+
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(
+        mailbox_id=mailbox.id,
+        gmail_thread_id="thread-ineligible-form",
+        subject_canonical="❗️ Ineligible League Player Form - Adult 18 & Over Sectional (.0’s) - Gabrielle James",
+    )
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-ineligible-form",
+        subject="❗️ Ineligible League Player Form - Adult 18 & Over Sectional (.0’s) - Gabrielle James",
+        from_display="USTA Texas",
+        from_address="noreply@formresponse.com",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    body_path = tmp_path / "ineligible-form.txt"
+    body_path.write_text("Ineligible league player form notification.", encoding="utf-8")
+    session.add(
+        MessageArtifact(
+            message_id=message.id,
+            artifact_type="normalized_body_text",
+            storage_uri=str(body_path),
+        )
+    )
+    session.commit()
+
+    refreshed_message = polling.get_message_detail(session, message.id)
+    assert refreshed_message is not None
+
+    category = polling.apply_deterministic_classification(session, refreshed_message)
+    session.flush()
+    session.expire_all()
+
+    classified = polling.get_message_detail(session, message.id)
+    assert category is not None
+    assert classified is not None
+    assert classified.assigned_category is not None
+    assert classified.assigned_category.name == "Ineligible League Player Form"
     assert classified.reply_needed is False
     assert classified.informational_only is True
     assert classified.priority == "low"

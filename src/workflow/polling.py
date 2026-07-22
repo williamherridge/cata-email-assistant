@@ -18,6 +18,9 @@ from googleapiclient.errors import HttpError
 from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from src.google_workspace.auth import GoogleAuthorizationRequiredError
+from src.google_workspace.sheets import DuplicateRecipientRow
+from src.google_workspace.sheets import TeamRegistrationRecipientListClient
 from src.gmail_ingest.client import GmailClient
 from src.gmail_ingest.parsing import (
     collect_attachment_metadata,
@@ -33,6 +36,7 @@ from src.gmail_ingest.parsing import (
 from src.shared.config import Settings
 from src.shared.config import get_settings
 from src.workflow.classification import classify_message_deterministically
+from src.workflow.classification import TEAM_REGISTRATION_CATEGORY
 from src.workflow.taxonomy import sync_taxonomy_catalog
 from src.shared.timezones import normalize_utc_to_local
 from src.shared.timezones import resolve_local_timezone
@@ -58,6 +62,9 @@ PORTAL_DRAFT_ARTIFACT = "portal_reply_draft"
 DEFAULT_SIGNATURE_LOGO_PATH = Path("src/admin_portal/static/images/tennis-austin-full-logo")
 logger = logging.getLogger(__name__)
 _DEFAULT_SIGNATURE_LOGO_HTML: str | None = None
+TEAM_REGISTRATION_PROCESSED_STATUS = "processed"
+TEAM_REGISTRATION_BLOCKED_DRAFT_REASON = "team_registration_facility_permission_required"
+TEAM_REGISTRATION_DUPLICATE_ALERT_RULE = "team_registration_duplicate_alert"
 
 
 def utcnow() -> datetime:
@@ -85,6 +92,25 @@ class SentReplyRecord:
     html: str
     metadata: dict[str, object]
     created_at: datetime | None
+
+
+@dataclass
+class TeamRegistrationRecord:
+    captain_name: str = ""
+    captain_usta_number: str = ""
+    registration_type: str = ""
+    captain_email: str = ""
+    team_name: str = ""
+    gender_day: str = ""
+    league_name: str = ""
+    level: str = ""
+    facility: str = ""
+    permission_to_use_courts: str = ""
+
+    @property
+    def combined_league_value(self) -> str:
+        parts = [self.gender_day, self.level, self.league_name]
+        return " - ".join(part for part in parts if part)
 
 
 def ensure_runtime_directories(settings: Settings) -> None:
@@ -168,7 +194,7 @@ def list_queue_messages(
         )
     if category_id is not None:
         statement = statement.where(Message.assigned_category_id == category_id)
-    if priority in {"critical", "normal", "low"}:
+    if priority in {"critical", "high", "normal", "low"}:
         statement = statement.where(Message.priority == priority)
     if reply_needed == "yes":
         statement = statement.where(Message.reply_needed.is_(True))
@@ -214,6 +240,15 @@ def list_history_messages(
             )
         )
 
+    if normalized_tab == "all":
+        statement = statement.where(Message.status != "new").order_by(
+            desc(Message.responded_at),
+            desc(Message.ignored_at),
+            desc(Message.updated_at),
+            desc(Message.id),
+        )
+        return list(session.scalars(statement))
+
     if normalized_tab == "ignored":
         statement = statement.where(Message.status == "ignored").order_by(desc(Message.ignored_at), desc(Message.id))
         messages = list(session.scalars(statement))
@@ -221,7 +256,14 @@ def list_history_messages(
             return [message for message in messages if get_ignore_source(message) == "manual"]
         return messages
 
-    statement = statement.where(Message.status == "responded").order_by(desc(Message.responded_at), desc(Message.id))
+    if normalized_tab == TEAM_REGISTRATION_PROCESSED_STATUS:
+        statement = statement.where(Message.status == TEAM_REGISTRATION_PROCESSED_STATUS).order_by(
+            desc(Message.updated_at),
+            desc(Message.id),
+        )
+        return list(session.scalars(statement))
+
+    statement = statement.where(Message.status == normalized_tab).order_by(desc(Message.responded_at), desc(Message.id))
     return list(session.scalars(statement))
 
 
@@ -338,7 +380,7 @@ def update_message_review(
 
 
 def transition_message_status(session: Session, message_id: int, status: str) -> Message:
-    if status not in {"new", "ignored", "responded"}:
+    if status not in {"new", "ignored", "responded", TEAM_REGISTRATION_PROCESSED_STATUS}:
         raise ValueError(f"Unsupported message status transition target: {status}")
 
     message = session.get(Message, message_id)
@@ -359,6 +401,9 @@ def transition_message_status(session: Session, message_id: int, status: str) ->
             else:
                 summary = "Administrator returned the message to responded history without sending a new reply."
             event_type = "message_responded"
+        elif status == TEAM_REGISTRATION_PROCESSED_STATUS:
+            summary = "Workflow marked the message processed."
+            event_type = "message_processed"
         else:
             message.ignored_at = None
             if old_status == "ignored":
@@ -543,7 +588,7 @@ def poll_mailbox(session: Session, settings: Settings, mailbox_id: int, trigger_
             analyze_item = ingest_message_work_item(session, settings, client, mailbox, poll_run, work_item)
             if analyze_item is None:
                 continue
-            analyze_message_work_item(session, analyze_item)
+            analyze_message_work_item(session, settings, analyze_item)
             persisted_count += 1
 
         mailbox.last_successful_history_id = discovery.history_id or mailbox.last_successful_history_id
@@ -697,7 +742,7 @@ def ingest_message_work_item(
     return analyze_item
 
 
-def analyze_message_work_item(session: Session, work_item: WorkItem) -> None:
+def analyze_message_work_item(session: Session, settings: Settings, work_item: WorkItem) -> None:
     if work_item.work_type != "analyze_message":
         fail_work_item(
             session,
@@ -730,7 +775,8 @@ def analyze_message_work_item(session: Session, work_item: WorkItem) -> None:
     try:
         if not is_sent_message(message) and message.assigned_category_id is None:
             result = apply_deterministic_classification(session, message)
-    except (OSError, ValueError, TypeError):
+        run_post_classification_workflows(session, settings, message)
+    except (OSError, ValueError, TypeError, RuntimeError, HttpError):
         logger.exception("Deterministic analysis failed for message %s.", message.id)
         fail_work_item(
             session,
@@ -738,8 +784,8 @@ def analyze_message_work_item(session: Session, work_item: WorkItem) -> None:
             message_id=message.id,
             work_item=work_item,
             event_type="message_analysis_failed",
-            summary=f"Deterministic analysis failed for message {message.id}.",
-            error_summary="Unexpected content or artifact failure during deterministic analysis.",
+            summary=f"Deterministic analysis or post-processing failed for message {message.id}.",
+            error_summary="Unexpected content, spreadsheet, or artifact failure during deterministic analysis.",
         )
         return
 
@@ -833,6 +879,119 @@ def apply_deterministic_classification(session: Session, message: Message) -> Ca
             )
         )
     return category
+
+
+def run_post_classification_workflows(session: Session, settings: Settings, message: Message) -> None:
+    category_name = (message.assigned_category.name if message.assigned_category else "").strip()
+    if not category_name and message.assigned_category_id:
+        category = session.get(Category, message.assigned_category_id)
+        category_name = (category.name if category is not None else "").strip()
+    category_name = category_name.casefold()
+    if category_name == TEAM_REGISTRATION_CATEGORY.casefold():
+        run_team_registration_workflow(session, settings, message)
+
+
+def run_team_registration_workflow(session: Session, settings: Settings, message: Message) -> None:
+    spreadsheet_id = normalize_optional_text(settings.team_registration_spreadsheet_id)
+    if not spreadsheet_id:
+        return
+
+    registration = parse_team_registration_record(read_body_artifact(message))
+    if registration is None:
+        raise ValueError(f"Message {message.id} could not be parsed as a team registration record.")
+
+    if not should_insert_team_registration_row(registration):
+        draft_html = build_team_registration_facility_blocked_draft_html(message, registration)
+        draft_to = registration.captain_email or get_reply_to_addresses(message)
+        draft_cc = resolve_team_registration_admin_cc(settings, message)
+        save_message_draft(
+            session,
+            settings,
+            message.id,
+            draft_to=draft_to,
+            draft_cc=draft_cc,
+            draft_subject=build_reply_subject(message),
+            draft_html=draft_html,
+        )
+        message.priority = normalize_priority("high")
+        message.reply_needed = True
+        session.add(
+            AuditEvent(
+                mailbox_id=message.mailbox_id,
+                message_id=message.id,
+                event_type="team_registration_facility_permission_required",
+                actor_type="workflow",
+                summary="Team registration requires facility permission before it can be added to the spreadsheet.",
+                detail_json=json.dumps(
+                    {
+                        "facility": registration.facility,
+                        "permission_to_use_courts": registration.permission_to_use_courts,
+                        "rule_code": TEAM_REGISTRATION_BLOCKED_DRAFT_REASON,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
+        session.flush()
+        return
+
+    client = TeamRegistrationRecipientListClient(settings)
+    duplicate = client.find_duplicate_row(
+        team_name=registration.team_name,
+        captain_name=registration.captain_name,
+        league_value=registration.combined_league_value,
+    )
+    if duplicate is not None:
+        send_team_registration_duplicate_alert(session, settings, message, registration, duplicate)
+        message.priority = normalize_priority("high")
+        session.add(
+            AuditEvent(
+                mailbox_id=message.mailbox_id,
+                message_id=message.id,
+                event_type="team_registration_duplicate_detected",
+                actor_type="workflow",
+                summary="Duplicate team registration row was detected in the recipient sheet.",
+                detail_json=json.dumps(
+                    {
+                        "team_name": registration.team_name,
+                        "captain_name": registration.captain_name,
+                        "league": registration.combined_league_value,
+                        "duplicate_row_number": duplicate.row_number,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
+        session.flush()
+        return
+
+    appended_row_number = client.append_team_registration_row(
+        build_team_registration_sheet_row(message, registration, settings)
+    )
+    message.status = TEAM_REGISTRATION_PROCESSED_STATUS
+    message.reply_needed = False
+    message.updated_at = utcnow()
+    session.add(
+        AuditEvent(
+            mailbox_id=message.mailbox_id,
+            message_id=message.id,
+            event_type="team_registration_sheet_row_inserted",
+            actor_type="workflow",
+            summary="Team registration row was added to the recipient sheet.",
+            detail_json=json.dumps(
+                {
+                    "spreadsheet_id": settings.team_registration_spreadsheet_id,
+                    "sheet_name": settings.team_registration_sheet_name,
+                    "row_number": appended_row_number,
+                    "team_name": registration.team_name,
+                    "captain_name": registration.captain_name,
+                    "league": registration.combined_league_value,
+                },
+                sort_keys=True,
+            ),
+        )
+    )
+    session.flush()
 
 
 def upsert_message_from_gmail(session: Session, settings: Settings, mailbox: Mailbox, raw_message: dict) -> Message:
@@ -1484,18 +1643,17 @@ def normalize_priority(value: str | None) -> str:
     normalized = (value or "normal").strip().lower()
     legacy_priority_map = {
         "urgent": "critical",
-        "high": "critical",
     }
     normalized = legacy_priority_map.get(normalized, normalized)
-    if normalized not in {"critical", "normal", "low"}:
+    if normalized not in {"critical", "high", "normal", "low"}:
         return "normal"
     return normalized
 
 
 def normalize_history_tab(value: str | None) -> str:
-    normalized = (value or "responded").strip().lower()
-    if normalized not in {"responded", "ignored"}:
-        return "responded"
+    normalized = (value or "all").strip().lower()
+    if normalized not in {"all", "new", "responded", "ignored", TEAM_REGISTRATION_PROCESSED_STATUS}:
+        return "all"
     return normalized
 
 
@@ -1559,9 +1717,7 @@ def get_reply_to_addresses(message: Message) -> str:
     saved = read_saved_draft_record(message)
     if saved is not None:
         return str(saved.get("draft_to") or "")
-    if message.from_address:
-        return message.from_address
-    return ""
+    return get_generated_reply_to_addresses(message)
 
 
 def get_default_reply_to_addresses(message: Message) -> list[str]:
@@ -1571,10 +1727,20 @@ def get_default_reply_to_addresses(message: Message) -> list[str]:
     return []
 
 
+def get_generated_reply_to_addresses(message: Message) -> str:
+    if message.from_address:
+        return message.from_address
+    return ""
+
+
 def get_reply_cc_addresses(message: Message) -> str:
     saved = read_saved_draft_record(message)
     if saved is not None:
         return str(saved.get("draft_cc") or "")
+    return get_generated_reply_cc_addresses(message)
+
+
+def get_generated_reply_cc_addresses(message: Message) -> str:
     self_identity_addresses = get_self_identity_addresses(message)
     reply_target_addresses = {address.casefold() for address in get_default_reply_to_addresses(message)}
     sender_address = ((message.from_address or "") or "").strip().casefold()
@@ -1622,6 +1788,10 @@ def build_reply_subject(message: Message) -> str:
         subject = str(saved.get("draft_subject") or "").strip()
         if subject:
             return subject
+    return build_generated_reply_subject(message)
+
+
+def build_generated_reply_subject(message: Message) -> str:
     subject = (message.subject or "").strip()
     if not subject:
         return "Re:"
@@ -1648,15 +1818,11 @@ def send_reply_message(
 
     requested_to = draft_to
     requested_cc = draft_cc
-    effective_to = requested_to
-    effective_cc = requested_cc
-    audit_rule = None
-
-    override_address = normalize_optional_text(settings.gmail_test_send_override)
-    if override_address:
-        effective_to = [override_address]
-        effective_cc = []
-        audit_rule = TEST_SEND_AUDIT_RULE
+    effective_to, effective_cc, audit_rule = apply_outbound_recipient_override(
+        settings,
+        requested_to,
+        requested_cc,
+    )
 
     client = GmailClient(settings)
     outbound_html = build_outbound_reply_html(message, draft_html, read_sent_reply_records(message, settings))
@@ -1733,6 +1899,23 @@ def send_reply_message(
     return get_message_detail(session, message_id) or message
 
 
+def apply_outbound_recipient_override(
+    settings: Settings,
+    requested_to: list[str],
+    requested_cc: list[str],
+) -> tuple[list[str], list[str], str | None]:
+    effective_to = requested_to
+    effective_cc = requested_cc
+    audit_rule = None
+
+    override_address = normalize_optional_text(settings.gmail_test_send_override)
+    if override_address:
+        effective_to = [override_address]
+        effective_cc = []
+        audit_rule = TEST_SEND_AUDIT_RULE
+    return effective_to, effective_cc, audit_rule
+
+
 def save_message_draft(
     session: Session,
     settings: Settings,
@@ -1742,6 +1925,8 @@ def save_message_draft(
     draft_cc: str,
     draft_subject: str,
     draft_html: str,
+    event_type: str = "message_draft_saved",
+    event_summary: str = "Administrator saved a reply draft in the portal.",
 ) -> Message:
     message = get_message_detail(session, message_id)
     if message is None:
@@ -1778,9 +1963,9 @@ def save_message_draft(
         AuditEvent(
             mailbox_id=message.mailbox_id,
             message_id=message.id,
-            event_type="message_draft_saved",
+            event_type=event_type,
             actor_type="admin_portal",
-            summary="Administrator saved a reply draft in the portal.",
+            summary=event_summary,
         )
     )
     session.commit()
@@ -1794,25 +1979,84 @@ def build_default_draft_html(message: Message) -> str:
         if saved_html:
             return saved_html
 
+    return build_generated_draft_html(message)
+
+
+def build_generated_draft_html(message: Message) -> str:
+    blocked_registration = build_team_registration_blocked_registration(message)
+    if blocked_registration is not None:
+        return build_team_registration_facility_blocked_draft_html(message, blocked_registration)
+
     summary_html = build_manual_work_summary_html(message)
     if summary_html:
         return summary_html
 
     recipient_name = resolve_reply_recipient_name(message)
-    return (
-        f'<p style="margin: 0 0 0.35rem; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Hi {html.escape(recipient_name)},</p>'
-        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>'
-        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>'
-        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Thank you,</p>'
-        '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 700;">Casey Herridge</p>'
-        '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 400;">Leagues Director | (210) 275.3173</p>'
-        '<p style="margin: 0; line-height: 1.1;">'
-        '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;">Capital Area Tennis Association </span>'
-        '<span style="font-family: Tahoma, sans-serif; font-size: 5pt; font-weight: 400;">d/b/a</span>'
-        '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;"> Tennis Austin</span>'
-        "</p>"
-        f"{build_default_signature_logo_html()}"
+    return build_reply_html_with_signature(recipient_name, [])
+
+
+def build_generated_draft_payload(message: Message, settings: Settings) -> dict[str, str]:
+    blocked_registration = build_team_registration_blocked_registration(message)
+    if blocked_registration is not None:
+        return {
+            "draft_to": blocked_registration.captain_email or get_generated_reply_to_addresses(message),
+            "draft_cc": resolve_team_registration_admin_cc(settings, message),
+            "draft_subject": build_generated_reply_subject(message),
+            "draft_html": build_team_registration_facility_blocked_draft_html(message, blocked_registration),
+        }
+    return {
+        "draft_to": get_generated_reply_to_addresses(message),
+        "draft_cc": get_generated_reply_cc_addresses(message),
+        "draft_subject": build_generated_reply_subject(message),
+        "draft_html": build_generated_draft_html(message),
+    }
+
+
+def regenerate_message_draft(session: Session, settings: Settings, message_id: int) -> Message:
+    message = get_message_detail(session, message_id)
+    if message is None:
+        raise ValueError(f"Message {message_id} was not found.")
+    generated = build_generated_draft_payload(message, settings)
+    return save_message_draft(
+        session,
+        settings,
+        message_id,
+        **generated,
+        event_type="message_draft_regenerated",
+        event_summary="Administrator regenerated the reply draft from current message rules.",
     )
+
+
+def build_reply_html_with_signature(recipient_name: str, body_paragraphs: list[str]) -> str:
+    html_parts = [
+        (
+            f'<p style="margin: 0 0 0.35rem; font-family: Aptos, Calibri, sans-serif; '
+            f'font-size: 12pt; font-weight: 400;">Hi {html.escape(recipient_name)},</p>'
+        ),
+        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>',
+    ]
+    for paragraph in body_paragraphs:
+        html_parts.append(
+            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">'
+            f"{paragraph}"
+            "</p>"
+        )
+    html_parts.extend(
+        [
+            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>',
+            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Thank you,</p>',
+            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>',
+            '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 700;">Casey Herridge</p>',
+            '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 400;">Leagues Director | (210) 275.3173</p>',
+            '<p style="margin: 0; line-height: 1.1;">'
+            '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;">Capital Area Tennis Association </span>'
+            '<span style="font-family: Tahoma, sans-serif; font-size: 5pt; font-weight: 400;">d/b/a</span>'
+            '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;"> Tennis Austin</span>'
+            "</p>"
+            f"{build_default_signature_logo_html()}",
+        ]
+    )
+    return "".join(html_parts)
 
 
 def build_default_signature_logo_html() -> str:
@@ -1933,8 +2177,9 @@ def build_manual_work_summary_html(message: Message) -> str:
     body_text = read_body_artifact(message)
 
     if category_name == "team registration submission":
+        registration = parse_team_registration_record(body_text)
         registration_fields = parse_team_registration_fields(body_text)
-        if registration_fields:
+        if registration is not None and registration_fields:
             rows = "".join(
                 f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
                 for label, value in registration_fields
@@ -1951,43 +2196,121 @@ def build_manual_work_summary_html(message: Message) -> str:
 
 
 def parse_team_registration_fields(body_text: str) -> list[tuple[str, str]]:
-    label_aliases = {
-        "Date": ["Date"],
-        "Captain Name": ["Captain Name"],
-        "Captain USTA Number": ["Captain USTA Number"],
-        "Registration Type": ["Registration Type"],
-        "Phone": ["Phone"],
-        "Email": ["Email"],
-        "Team Name": ["Team Name"],
-        "Gender/Day": ["Gender/Day"],
-        "League NTRP Level of Play": ["League NTRP Level of Play"],
-        "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)": [
-            "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
-            "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
-        ],
-        "Home Courts Contact (the name of the person who has given you written permission to use their courts)": [
-            "Home Courts Contact (the name of the person who has given you written permission to use their courts)"
-        ],
-        "Home Courts Contact Phone": ["Home Courts Contact Phone"],
-        "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts)": [
-            "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts)"
-        ],
-    }
-    parsed = extract_ordered_fields(" ".join(body_text.split()), label_aliases)
+    registration = parse_team_registration_record(body_text)
+    if registration is None:
+        return []
     labels = [
-        ("Captain Name", "Captain Name"),
-        ("Captain USTA Number", "Captain USTA Number"),
-        ("Registration Type", "Registration Type"),
-        ("Captain Email", "Email"),
-        ("Team Name", "Team Name"),
-        ("League", "Gender/Day"),
-        ("Level", "League NTRP Level of Play"),
-        (
-            "Facility",
-            "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
-        ),
+        ("Captain Name", registration.captain_name),
+        ("Captain USTA Number", registration.captain_usta_number),
+        ("Registration Type", registration.registration_type),
+        ("Captain Email", registration.captain_email),
+        ("Team Name", registration.team_name),
+        ("League", registration.gender_day),
+        ("Level", registration.level),
+        ("Facility", registration.facility),
+        ("Permission", registration.permission_to_use_courts),
     ]
-    return [(output_label, parsed[source_label]) for output_label, source_label in labels if parsed.get(source_label)]
+    return [(label, value) for label, value in labels if value]
+
+
+def parse_team_registration_record(body_text: str) -> TeamRegistrationRecord | None:
+    normalized_body = " ".join(body_text.split())
+    if "Captain Name" not in normalized_body or "Team Name" not in normalized_body:
+        return None
+
+    gender_day, league_name, level = parse_team_registration_league_parts(normalized_body)
+    registration = TeamRegistrationRecord(
+        captain_name=extract_field_between_labels(normalized_body, ["Captain Name"], ["Captain USTA Number"]),
+        captain_usta_number=extract_field_between_labels(
+            normalized_body,
+            ["Captain USTA Number"],
+            ["Registration Type"],
+        ),
+        registration_type=extract_field_between_labels(
+            normalized_body,
+            ["Registration Type"],
+            ["Captains Note for Potential Players (Closed but seeking or Open)", "Phone"],
+        ),
+        captain_email=extract_field_between_labels(normalized_body, ["Email"], ["Team Name"]),
+        team_name=extract_field_between_labels(normalized_body, ["Team Name"], ["Gender/Day"]),
+        gender_day=gender_day,
+        league_name=league_name,
+        level=level,
+        facility=extract_field_between_labels(
+            normalized_body,
+            [
+                "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+                "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+            ],
+            [
+                "Home Courts Contact (the name of the person who has given you written permission to use their courts)",
+                "Home Courts Contact Phone",
+                "Do you have permission to use these courts? (if you select yes, you are confirming that you have already received written permission from this facility to use their courts)",
+            ],
+        ),
+        permission_to_use_courts=extract_permission_value(normalized_body),
+    )
+    if not registration.captain_name or not registration.team_name:
+        return None
+    registration.registration_type = normalize_team_registration_registration_type(
+        registration.registration_type
+    )
+    return registration
+
+
+def parse_team_registration_league_parts(normalized_body: str) -> tuple[str, str, str]:
+    facility_labels = (
+        "League Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+        "Home Courts or Event (do not select a facility unless you have ALREADY received permission to play out of this facility)",
+    )
+    pattern = re.compile(
+        r"Gender/Day\s+(?P<gender_day>.*?)\s+League\s+(?P<league_name>.*?)\s+NTRP Level of Play\s+(?P<level>.*?)\s+(?="
+        + "|".join(re.escape(label) for label in facility_labels)
+        + r")",
+        re.IGNORECASE,
+    )
+    match = pattern.search(normalized_body)
+    if not match:
+        return "", "", ""
+    gender_day = clean_team_registration_value(match.group("gender_day"))
+    league_name = clean_team_registration_value(match.group("league_name"))
+    level = normalize_team_registration_level(match.group("level"))
+    return gender_day, league_name, level
+
+
+def extract_field_between_labels(body_text: str, start_labels: list[str], end_labels: list[str]) -> str:
+    start_pattern = "|".join(re.escape(label) for label in start_labels)
+    end_pattern = "|".join(re.escape(label) for label in end_labels)
+    pattern = re.compile(rf"(?:{start_pattern})\s+(.*?)\s+(?={end_pattern})", re.IGNORECASE)
+    match = pattern.search(body_text)
+    if not match:
+        return ""
+    return clean_team_registration_value(match.group(1))
+
+
+def clean_team_registration_value(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip())
+
+
+def normalize_team_registration_level(value: str) -> str:
+    normalized = clean_team_registration_value(value)
+    return re.sub(r"\s+League$", "", normalized, flags=re.IGNORECASE)
+
+
+def normalize_team_registration_registration_type(value: str) -> str:
+    normalized = clean_team_registration_value(value)
+    return re.sub(r"\s*\(.*\)\s*$", "", normalized).strip()
+
+
+def extract_permission_value(body_text: str) -> str:
+    label = (
+        "Do you have permission to use these courts? "
+        "(if you select yes, you are confirming that you have already received written permission "
+        "from this facility to use their courts)"
+    )
+    pattern = re.compile(re.escape(label) + r"\s+(Yes|No)\b", re.IGNORECASE)
+    match = pattern.search(body_text)
+    return clean_team_registration_value(match.group(1)) if match else ""
 
 
 def extract_ordered_fields(body_text: str, label_aliases: dict[str, list[str]]) -> dict[str, str]:
@@ -2008,3 +2331,148 @@ def extract_ordered_fields(body_text: str, label_aliases: dict[str, list[str]]) 
         if value:
             extracted[canonical_label] = value
     return extracted
+
+
+def should_insert_team_registration_row(registration: TeamRegistrationRecord) -> bool:
+    permission_value = (registration.permission_to_use_courts or "").strip().casefold()
+    facility_value = (registration.facility or "").strip().casefold()
+    if permission_value == "yes":
+        return True
+    return facility_value == "ut whitaker"
+
+
+def build_team_registration_blocked_registration(message: Message) -> TeamRegistrationRecord | None:
+    category_name = (message.assigned_category.name if message.assigned_category else "").strip().casefold()
+    if category_name != TEAM_REGISTRATION_CATEGORY.casefold():
+        return None
+    registration = parse_team_registration_record(read_body_artifact(message))
+    if registration is None or should_insert_team_registration_row(registration):
+        return None
+    return registration
+
+
+def build_team_registration_sheet_row(
+    message: Message,
+    registration: TeamRegistrationRecord,
+    settings: Settings,
+) -> dict[str, str]:
+    combined_league = registration.combined_league_value
+    return {
+        "Team Code": "",
+        "Team Name": registration.team_name,
+        "Captain(s)": registration.captain_name,
+        "Email Address": "",
+        "Email Provided": registration.captain_email,
+        "Captain USTA Number": registration.captain_usta_number,
+        "League": combined_league,
+        "Registration Type": registration.registration_type,
+        "Facility": registration.facility,
+        "Minimum Roster": "",
+        "Max Roster": "",
+        "Format": "",
+        "Subject": combined_league,
+        "RosterDueDate": "",
+        "SeasonStartDate": "",
+        "EmailSent": "",
+        "SourceMessageId": str(message.id),
+        "IngestedAt": format_local_timestamp_for_sheet(utcnow(), settings),
+    }
+
+
+def format_local_timestamp_for_sheet(value: datetime, settings: Settings) -> str:
+    local_value = normalize_utc_to_local(value, settings.display_timezone)
+    meridiem = "am" if local_value.hour < 12 else "pm"
+    hour = local_value.hour % 12 or 12
+    timezone_name = local_value.strftime("%Z").lower()
+    return (
+        f"{local_value.year:04d}-{local_value.month:02d}-{local_value.day:02d} "
+        f"{hour}:{local_value.minute:02d} {meridiem}"
+        f"{f' {timezone_name}' if timezone_name else ''}"
+    )
+
+
+def build_team_registration_facility_blocked_draft_html(
+    message: Message,
+    registration: TeamRegistrationRecord,
+) -> str:
+    recipient_name = extract_first_name(registration.captain_name) or resolve_reply_recipient_name(message)
+    facility = html.escape(registration.facility or "the selected facility")
+    return build_reply_html_with_signature(
+        recipient_name,
+        [
+            (
+                "Your team cannot be registered until you have permission for the facility to be able to play there. "
+                f"Please reply once permission for {facility} has been confirmed, or provide an approved facility."
+            )
+        ],
+    )
+
+
+def resolve_team_registration_admin_cc(settings: Settings, message: Message) -> str:
+    mailbox_address = normalize_optional_text(message.mailbox.gmail_address if message.mailbox else None)
+    if mailbox_address:
+        return mailbox_address
+    return normalize_optional_text(settings.default_gmail_address) or ""
+
+
+def extract_first_name(full_name: str) -> str:
+    normalized = clean_team_registration_value(full_name)
+    if not normalized:
+        return ""
+    return normalized.split(" ", 1)[0]
+
+
+def send_team_registration_duplicate_alert(
+    session: Session,
+    settings: Settings,
+    message: Message,
+    registration: TeamRegistrationRecord,
+    duplicate: DuplicateRecipientRow,
+) -> None:
+    recipient = normalize_optional_text((message.mailbox.gmail_address if message.mailbox else None) or settings.default_gmail_address)
+    if not recipient:
+        return
+
+    client = GmailClient(settings)
+    effective_to, effective_cc, audit_rule = apply_outbound_recipient_override(settings, [recipient], [])
+    subject = f"Duplicate team registration needs review: {registration.team_name}"
+    html_body = (
+        "<p>A duplicate Team Registration Submission was detected during ingest.</p>"
+        "<ul>"
+        f"<li><strong>Source message id:</strong> {message.id}</li>"
+        f"<li><strong>Category:</strong> {html.escape(message.assigned_category.name if message.assigned_category else TEAM_REGISTRATION_CATEGORY)}</li>"
+        f"<li><strong>Team name:</strong> {html.escape(registration.team_name)}</li>"
+        f"<li><strong>Captain:</strong> {html.escape(registration.captain_name)}</li>"
+        f"<li><strong>League:</strong> {html.escape(registration.combined_league_value)}</li>"
+        f"<li><strong>Existing RecipientList row:</strong> {duplicate.row_number}</li>"
+        "</ul>"
+    )
+    send_result = client.send_message(
+        to_addresses=effective_to,
+        cc_addresses=effective_cc,
+        subject=subject,
+        html_body=html_body,
+    )
+    session.add(
+        AuditEvent(
+            mailbox_id=message.mailbox_id,
+            message_id=message.id,
+            event_type="team_registration_duplicate_alert_sent",
+            actor_type="workflow",
+            summary="Duplicate team-registration alert email was sent to the admin mailbox.",
+            detail_json=json.dumps(
+                {
+                    "recipient": recipient,
+                    "effective_to": effective_to,
+                    "effective_cc": effective_cc,
+                    "team_name": registration.team_name,
+                    "captain_name": registration.captain_name,
+                    "league": registration.combined_league_value,
+                    "duplicate_row_number": duplicate.row_number,
+                    "gmail_send_result": send_result,
+                    "delivery_rule": audit_rule or TEAM_REGISTRATION_DUPLICATE_ALERT_RULE,
+                },
+                sort_keys=True,
+            ),
+        )
+    )

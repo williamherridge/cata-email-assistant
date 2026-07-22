@@ -7,18 +7,20 @@
     <div class="section-header">
       <div>
         <h2 style="margin-bottom: 0.35rem;">History</h2>
-        <div class="muted">Read-only review for responded and ignored messages, with fast return-to-queue actions when follow-up work needs to restart.</div>
+        <div class="muted">Read-only review for non-queue messages, with fast return-to-queue actions when follow-up work needs to restart.</div>
       </div>
     </div>
 
-    <div class="history-tabs">
-      <a href="/history?tab=responded" class="tab-link {% if tab == 'responded' %}active{% endif %}">Sent/Responded</a>
-      <a href="/history?tab=ignored&ignored_scope=manual" class="tab-link {% if tab == 'ignored' %}active{% endif %}">Ignored</a>
-    </div>
-
     <form action="/history" method="get" class="stack">
-      <input type="hidden" name="tab" value="{{ tab }}" />
-      <div class="form-grid" style="grid-template-columns: minmax(0, 2fr) {% if tab == 'ignored' %}minmax(0, 1fr){% endif %} auto; align-items: end;">
+      <div class="form-grid" style="grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) {% if tab == 'ignored' %}minmax(0, 1fr){% endif %} auto; align-items: end;">
+        <label>
+          Status
+          <select name="tab">
+            {% for value, label in history_status_options %}
+              <option value="{{ value }}" {% if tab == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
         <label>
           Search
           <input type="text" name="search" value="{{ search }}" placeholder="From or subject" />
@@ -34,11 +36,7 @@
         {% endif %}
         <div class="button-row">
           <button type="submit">Apply</button>
-          {% if tab == 'ignored' %}
-            <a href="/history?tab=ignored&ignored_scope=manual" class="link-button">Clear</a>
-          {% else %}
-            <a href="/history?tab=responded" class="link-button">Clear</a>
-          {% endif %}
+          <a href="/history?tab=all" class="link-button">Clear</a>
         </div>
       </div>
     </form>
@@ -56,28 +54,34 @@
       {% if messages %}
         <div class="history-list">
           {% for message in messages %}
-            {% if tab == 'ignored' %}
-              {% set row_href = "/history?tab=ignored&ignored_scope=" ~ ignored_scope ~ "&selected_message_id=" ~ message.id %}
-            {% else %}
-              {% set row_href = "/history?tab=responded&selected_message_id=" ~ message.id %}
-            {% endif %}
+            {% set row_href = return_to_history ~ ("&selected_message_id=" if "?" in return_to_history else "?selected_message_id=") ~ message.id %}
             <a href="{{ row_href }}" class="history-row {% if selected_message_id == message.id %}selected{% endif %}">
               <div class="history-row-top">
                 <div class="history-row-from">{{ message.from_display or message.from_address or "Unknown" }}</div>
                 <div class="history-row-date">
-                  {% if tab == "responded" %}
+                  {% if message.status == "responded" %}
                     {{ message.responded_at|portal_datetime_compact if message.responded_at else "Unknown" }}
-                  {% else %}
+                  {% elif message.status == "ignored" %}
                     {{ message.ignored_at|portal_datetime_compact if message.ignored_at else "Unknown" }}
+                  {% else %}
+                    {{ message.updated_at|portal_datetime_compact if message.updated_at else "Unknown" }}
                   {% endif %}
                 </div>
               </div>
               <div class="history-row-subject">{{ message.subject or "(No subject)" }}</div>
               <div class="muted">
-                {% if tab == "responded" %}
+                {% if message.status == "responded" %}
                   Responded
+                {% elif message.status == "ignored" %}
+                  {% if tab == "ignored" and ignored_scope == "manual" %}
+                    Manual ignore
+                  {% else %}
+                    Ignored
+                  {% endif %}
+                {% elif message.status == "processed" %}
+                  Processed
                 {% else %}
-                  {{ "Manual ignore" if ignored_scope == "manual" else "Ignored" }}
+                  {{ message.status|title }}
                 {% endif %}
               </div>
             </a>
@@ -97,10 +101,12 @@
               <div class="muted">
                 From:
                 {{ selected_message.from_display or selected_message.from_address or "Unknown" }}
-                {% if tab == "responded" and selected_message.responded_at %}
+                {% if selected_message.status == "responded" and selected_message.responded_at %}
                   | Sent {{ selected_message.responded_at|portal_datetime }}
-                {% elif tab == "ignored" and selected_message.ignored_at %}
+                {% elif selected_message.status == "ignored" and selected_message.ignored_at %}
                   | Ignored {{ selected_message.ignored_at|portal_datetime }}
+                {% elif selected_message.status == "processed" %}
+                  | Processed {{ selected_message.updated_at|portal_datetime if selected_message.updated_at else "Unknown" }}
                 {% endif %}
               </div>
             </div>
@@ -127,14 +133,14 @@
             <div>{{ selected_message.priority }}</div>
             <div class="muted">Category</div>
             <div>{{ selected_message.assigned_category.name if selected_message.assigned_category else "Not set" }}</div>
-            {% if tab == "ignored" %}
+            {% if selected_message.status == "ignored" %}
               <div class="muted">Ignore Source</div>
               <div>{{ "Manual" if selected_ignore_source == "manual" else "Automatic" }}</div>
             {% endif %}
           </div>
         </div>
 
-        {% if tab == "responded" %}
+        {% if selected_message.status == "responded" %}
           <div class="panel">
             <div class="section-header">
               <h3>Sent Reply</h3>

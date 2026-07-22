@@ -23,6 +23,13 @@ CATEGORY_PROFILES = {
         "default_informational_only": True,
         "priority_hint": "low",
     },
+    "ineligible league player form": {
+        "description": "Structured USTA Texas form submission identifying an ineligible league player.",
+        "default_draft_behavior": "auto_ignore_candidate",
+        "default_reply_needed": False,
+        "default_informational_only": True,
+        "priority_hint": "low",
+    },
     "make-up match line up": {
         "description": "Structured CATA form submission that captures a make-up match lineup.",
         "default_draft_behavior": "auto_ignore_candidate",

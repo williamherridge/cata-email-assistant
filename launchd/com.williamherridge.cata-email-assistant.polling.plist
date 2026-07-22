@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.williamherridge.cata-email-assistant.polling</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/williamherridge/Documents/repos/cata-email-assistant/scripts/run_scheduled_poll.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/williamherridge/Documents/repos/cata-email-assistant</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/williamherridge/Documents/repos/cata-email-assistant/data/processed/logs/launchd_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/williamherridge/Documents/repos/cata-email-assistant/data/processed/logs/launchd_stderr.log</string>
+  </dict>
+</plist>

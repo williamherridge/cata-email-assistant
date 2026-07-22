@@ -59,10 +59,48 @@ Use these commands from the repo root:
 For the pilot, the simplest deployment model is:
 
 - run the portal normally
-- schedule the polling runner every `15` minutes with `launchd`
+- schedule the polling runner every `15` minutes with `launchd` or `cron`
 - let the application skip off-hours invocations that are not due yet
 
 This keeps host setup simple while still honoring the approved day/night cadence.
+
+### Repository artifacts
+
+- LaunchAgent plist:
+  - [launchd/com.williamherridge.cata-email-assistant.polling.plist](/Users/williamherridge/Documents/repos/cata-email-assistant/launchd/com.williamherridge.cata-email-assistant.polling.plist)
+- Wrapper script:
+  - [scripts/run_scheduled_poll.sh](/Users/williamherridge/Documents/repos/cata-email-assistant/scripts/run_scheduled_poll.sh)
+
+### Install on this Mac
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp launchd/com.williamherridge.cata-email-assistant.polling.plist ~/Library/LaunchAgents/com.williamherridge.cata-email-assistant.polling.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.williamherridge.cata-email-assistant.polling.plist 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.williamherridge.cata-email-assistant.polling.plist
+launchctl kickstart -k "gui/$(id -u)/com.williamherridge.cata-email-assistant.polling"
+```
+
+### Check status
+
+```bash
+launchctl print "gui/$(id -u)/com.williamherridge.cata-email-assistant.polling"
+tail -n 50 data/processed/logs/scheduled_poll.log
+```
+
+## Cron fallback
+
+If `launchd` is temperamental on a specific Mac, use the user crontab instead:
+
+```bash
+*/15 * * * * /Users/williamherridge/bin/cata-email-assistant-run-scheduled-poll.sh
+```
+
+This is still valid for the lean pilot because:
+
+- the host is invoking one simple command
+- the application itself decides whether a mailbox is actually due
+- off-hours runs are skipped by schedule logic inside the app
 
 ## Next step after automatic polling
 

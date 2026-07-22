@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     gmail_poll_day_end_hour: int = Field(default=19, alias="GMAIL_POLL_DAY_END_HOUR")
     gmail_poll_day_interval_minutes: int = Field(default=15, alias="GMAIL_POLL_DAY_INTERVAL_MINUTES")
     gmail_poll_offhours_interval_minutes: int = Field(default=120, alias="GMAIL_POLL_OFFHOURS_INTERVAL_MINUTES")
+    team_registration_spreadsheet_id: str | None = Field(
+        default=None,
+        alias="TEAM_REGISTRATION_SPREADSHEET_ID",
+    )
+    team_registration_sheet_name: str = Field(
+        default="RecipientList",
+        alias="TEAM_REGISTRATION_SHEET_NAME",
+    )
 
     @field_validator("default_gmail_aliases", mode="before")
     @classmethod

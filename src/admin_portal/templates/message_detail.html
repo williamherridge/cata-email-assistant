@@ -60,7 +60,7 @@
         <label>
           Priority
           <select name="priority">
-            {% for option in ["critical", "normal", "low"] %}
+            {% for option in ["critical", "high", "normal", "low"] %}
               <option value="{{ option }}" {% if message.priority == option %}selected{% endif %}>{{ option|title }}</option>
             {% endfor %}
           </select>

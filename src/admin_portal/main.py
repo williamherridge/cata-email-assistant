@@ -49,6 +49,7 @@ from src.workflow.polling import (
     read_body_artifact,
     read_body_html_artifact,
     read_sent_reply_records,
+    regenerate_message_draft,
     save_message_draft,
     send_reply_message,
     transition_message_status,
@@ -181,6 +182,7 @@ def build_queue_context(request: Request, **overrides):
         "polled": request.query_params.get("polled") == "1",
         "sent": request.query_params.get("sent") == "1",
         "ignored": request.query_params.get("ignored") == "1",
+        "regenerated": request.query_params.get("regenerated") == "1",
         "send_error": request.query_params.get("send_error") or "",
         "page_error": resolve_page_error(request.query_params.get("error")),
         "selected_message": None,
@@ -285,6 +287,13 @@ def build_history_context(request: Request, **overrides):
     context = {
         "request": request,
         "tab": tab,
+        "history_status_options": [
+            ("all", "All"),
+            ("responded", "Sent/Responded"),
+            ("processed", "Processed"),
+            ("ignored", "Ignored"),
+            ("new", "New"),
+        ],
         "messages": [],
         "selected_message": None,
         "selected_message_id": None,
@@ -293,6 +302,7 @@ def build_history_context(request: Request, **overrides):
         "saved": request.query_params.get("saved") == "1",
         "page_error": resolve_page_error(request.query_params.get("error")),
         "return_to_history": f"/history?tab={tab}",
+        "history_filter_query": "",
         "sent_reply_records": [],
         "selected_body_text": "",
         "selected_body_html": "",
@@ -489,11 +499,13 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
                 selected_message_id=selected_id,
                 search=search_text,
                 ignored_scope=ignored_scope,
+                history_filter_query=filter_query,
                 return_to_history=f"/history?{filter_query}" if filter_query else "/history",
                 sent_reply_records=read_sent_reply_records(selected_message) if selected_message else [],
                 selected_body_text=read_body_artifact(selected_message) if selected_message else "",
                 selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
                 selected_ignore_source=get_ignore_source(selected_message) if selected_message else "",
+                selected_history_status=selected_message.status if selected_message else "",
                 **build_original_recipient_context(selected_message),
             ),
         )
@@ -508,6 +520,7 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
                 tab=tab,
                 search=search_text,
                 ignored_scope=ignored_scope,
+                history_filter_query=filter_query,
                 page_error=resolve_page_error("history_load_failed"),
                 return_to_history=f"/history?{filter_query}" if filter_query else "/history",
             ),
@@ -627,6 +640,23 @@ async def save_message_draft_action(message_id: int, request: Request, db: Sessi
         return RedirectResponse(url=build_redirect_url(return_to, error="review_save_failed"), status_code=303)
 
 
+@app.post("/messages/{message_id}/regenerate")
+async def regenerate_message_draft_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
+    message = get_message_detail(db, message_id)
+    if message is None:
+        return RedirectResponse(url=build_redirect_url("/queue", error="message_missing"), status_code=303)
+
+    body = await request.body()
+    return_to = parse_return_to(body, "/queue")
+    try:
+        regenerate_message_draft(db, settings, message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, regenerated="1"), status_code=303)
+    except Exception:
+        rollback_session(db)
+        logger.exception("Draft regenerate failed for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="review_save_failed"), status_code=303)
+
+
 @app.post("/messages/{message_id}/send")
 async def send_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
     message = get_message_detail(db, message_id)
@@ -694,10 +724,10 @@ async def reopen_message_action(message_id: int, request: Request, db: Session =
 async def responded_message_action(message_id: int, request: Request, db: Session = Depends(get_db_session)):
     message = get_message_detail(db, message_id)
     if message is None:
-        return RedirectResponse(url=build_redirect_url("/history", tab="responded", error="message_missing"), status_code=303)
+        return RedirectResponse(url=build_redirect_url("/history", tab="all", error="message_missing"), status_code=303)
 
     body = await request.body()
-    return_to = parse_return_to(body, "/history?tab=responded")
+    return_to = parse_return_to(body, "/history?tab=all")
     try:
         transition_message_status(db, message_id, "responded")
         return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)

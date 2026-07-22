@@ -40,6 +40,9 @@
       {% if saved %}
         <div class="notice">The queue view was updated after your last message action.</div>
       {% endif %}
+      {% if regenerated %}
+        <div class="notice">The draft was regenerated from the current message rules and draft defaults.</div>
+      {% endif %}
       {% if sent %}
         <div class="notice">Reply sent. [Only to william@theherridges.com for testing] The message was marked responded and removed from the default queue.</div>
       {% endif %}
@@ -78,7 +81,7 @@
             Priority
             <select name="priority">
               <option value="">All</option>
-              {% for option in ["critical", "normal", "low"] %}
+              {% for option in ["critical", "high", "normal", "low"] %}
                 <option value="{{ option }}" {% if filters.priority == option %}selected{% endif %}>{{ option|title }}</option>
               {% endfor %}
             </select>
@@ -141,6 +144,8 @@
 
                 {% if message.priority == "critical" %}
                   <span class="meta-icon meta-critical" title="Critical priority">!</span>
+                {% elif message.priority == "high" %}
+                  <span class="meta-icon meta-high" title="High priority">↑</span>
                 {% elif message.priority == "low" %}
                   <span class="meta-icon meta-low" title="Low priority">↓</span>
                 {% endif %}

@@ -6,14 +6,14 @@ Last updated: July 22, 2026
 
 - Path: `/Users/williamherridge/Documents/repos/cata-email-assistant`
 - Branch: `master`
-- Latest pushed commit: `8c2d3f7` - `Add lean automatic polling runner`
-- Remote status: local `master` and `origin/master` are in sync at `8c2d3f7`.
+- Latest pushed commit at handoff start: `8c2d3f7` - `Add lean automatic polling runner`
+- Remote status at handoff start: local `master` includes additional unpushed portal, Gmail, taxonomy, and Google Sheets workflow changes beyond `8c2d3f7`.
 
 ## Working Tree
 
-- Current git status is clean except for one untracked local database file:
+- Current git status includes tracked implementation changes plus one untracked local scratch database:
   - `data/app.db`
-- The untracked `data/app.db` file is a local scratch SQLite file and should not be committed.
+- `data/app.db` is a local scratch SQLite file and should not be committed.
 
 ## What Is Complete
 
@@ -49,6 +49,7 @@ Last updated: July 22, 2026
 - Queue navigation performance was improved for cross-device use on the local network.
 - Queue/workbench usability was substantially refined after the performance pass.
 - Automatic scheduled polling support is now implemented for the lean pilot runtime.
+- Google Sheets integration scaffolding now exists for deterministic spreadsheet workflows tied to Gmail ingest.
 
 ## Taxonomy And Classification Progress
 
@@ -57,6 +58,7 @@ Last updated: July 22, 2026
 - `Ineligible player for sectionals notification` normalizes to `Ineligible player`.
 - Deterministic category handling now exists for:
   - `Make-up match line up`
+  - `Ineligible League Player Form`
   - `Team registration submission`
   - `Facility Request > UT-W`
 
@@ -104,6 +106,56 @@ Last updated: July 22, 2026
   - matching messages are automatically moved to `ignored`
   - a `message_ignored` audit event is written with workflow attribution
 
+`Ineligible League Player Form`
+
+- Matches structured form-response messages.
+- Uses:
+  - sender `noreply@formresponse.com`
+  - subject starting with `❗️ Ineligible League Player Form`
+- Defaults:
+  - `informational_only = true`
+  - `reply_needed = false`
+  - `priority = low`
+  - `default_draft_behavior = auto_ignore_candidate`
+- Runtime behavior:
+  - deterministic classification assigns category `Ineligible League Player Form`
+  - matching messages are automatically moved to `ignored`
+  - existing matching messages were backfilled locally for ids `61`, `62`, `64`, and `105`
+
+## Team Registration Spreadsheet Progress
+
+- Google Sheets authorization now includes `spreadsheets` scope.
+- Google Sheets API was enabled on the OAuth project and verified with a live write.
+- RecipientList integration now:
+  - ensures required worksheet columns exist
+  - appends new rows for qualifying `Team registration submission` messages
+  - writes `SourceMessageId` using the internal app message id
+  - writes `IngestedAt` in local Central time
+- Team registration rows now include:
+  - `Captain USTA Number`
+  - normalized `Registration Type`
+  - `Facility`
+  - concatenated `League`
+  - `Subject` equal to the concatenated league value
+- Registration Type is now normalized to the short label only:
+  - `Closed Team`
+  - `Closed but Seeking`
+  - `Open Team`
+- Successful sheet insertions mark the message `processed`.
+- Blocked team registrations:
+  - do not append to the sheet
+  - save a generated reply draft to the captain
+  - set `reply_needed = true`
+  - set `priority = high`
+- Duplicate handling:
+  - checks uniqueness using `Team Name + Captain(s) + League`
+  - does not overwrite an existing row
+  - sends an admin alert instead
+- Verified live example:
+  - internal message `348`
+  - row inserted into `RecipientList`
+  - message moved to `processed`
+
 ## Portal / Workbench Progress
 
 - Assigned category and subcategory now display correctly in the portal.
@@ -124,6 +176,22 @@ Last updated: July 22, 2026
 - Original-email recipient context now surfaces the other non-self participants more clearly during review.
 - Reply drafting now defaults closer to `reply all` behavior for supported messages by pre-populating non-self recipients in `Cc`.
 - Mailbox self-identity handling now supports aliases and same-person variants more safely, reducing cases where Casey appears as an external recipient.
+- History screen now uses a status dropdown with:
+  - `All`
+  - `Sent/Responded`
+  - `Processed`
+  - `Ignored`
+  - `New`
+- History row selection now preserves active filters like search text instead of resetting the view.
+- `Regenerate` is now a working action in the queue workbench:
+  - rebuilds draft recipients, subject, and body from current rules
+  - overwrites the saved draft artifact
+  - returns to the same selected queue item
+- Blocked team-registration drafts now:
+  - use captain email in `To`
+  - use the admin mailbox in `Cc`
+  - greet the captain by first name
+  - preserve the agreed signature formatting and Tennis Austin logo
 
 ## Latest Queue / Workbench Usability Pass
 
@@ -209,6 +277,24 @@ The latest pass addressed slow queue navigation observed when testing from a sec
   - `assigned_category_id`
   - `priority`
   - `reply_needed`
+
+## Gmail Thread Findings
+
+- Live Gmail inspection was used to validate a reported queue-sync concern around the `Whitaker parking` thread on July 22, 2026.
+- Result:
+  - the app correctly moved the earlier inbound message into responded history after Casey replied
+  - later inbound replies from Rory remained `new` because Casey had not replied to those later messages yet
+- Conclusion:
+  - the Gmail direct-reply sync worked as currently designed for that thread
+  - no code change is needed for that specific example
+  - future enhancement opportunity remains for lower-noise handling of acknowledgement-style follow-ups, but this should stay in the parking lot and not be implemented now
+
+## Current Next Steps
+
+- Commit and push the current portal, classification, Gmail, and Google Sheets workflow changes.
+- After compaction, likely next implementation focus:
+  - continue the spreadsheet automation path beyond row insertion
+  - define and implement the downstream behavior for additional structured message types as requested
 
 ### Migration added
 
@@ -327,6 +413,7 @@ Files updated in the latest pass:
   - skips mailboxes that are not due yet
   - continues safely if one mailbox poll fails
   - records scheduled polls with trigger source `scheduler`
+- On William's local Mac, unattended polling was enabled through user `cron` as the practical host scheduler path.
 
 ### New command
 

@@ -9,12 +9,17 @@ from src.shared.models import Category, Message
 MAKEUP_LINEUP_CATEGORY = "Make-up match line up"
 TEAM_REGISTRATION_CATEGORY = "Team registration submission"
 FACILITY_REQUEST_CATEGORY = "Facility Request"
+INELIGIBLE_LEAGUE_PLAYER_FORM_CATEGORY = "Ineligible League Player Form"
 UTW_SUBCATEGORY = "UT-W"
 REPLY_PREFIXES = ("re:", "fw:", "fwd:")
 MAKEUP_LINEUP_SUBJECT_PREFIX = "make-up match line up from"
 UTW_FACILITY_REQUEST_SUBJECT_PREFIX = "ut-w league facility request from"
+INELIGIBLE_LEAGUE_PLAYER_FORM_SUBJECT_PREFIX = "❗️ ineligible league player form"
 MAKEUP_LINEUP_SENDERS = {
     "web@site.tennisaustin.org",
+}
+FORMRESPONSE_SENDERS = {
+    "noreply@formresponse.com",
 }
 TEAM_REGISTRATION_SENDERS = {
     "no-reply@austintennis.org",
@@ -60,6 +65,9 @@ def classify_message_deterministically(message: Message, body_text: str) -> Clas
     if result is not None:
         return result
     result = classify_utw_facility_request(message, body_text)
+    if result is not None:
+        return result
+    result = classify_ineligible_league_player_form(message, body_text)
     if result is not None:
         return result
     return None
@@ -156,6 +164,34 @@ def classify_utw_facility_request(message: Message, body_text: str) -> Classific
             "so the message can be categorized and auto-ignored during ingest."
         ),
         rule_code="utw_facility_request_form_v1",
+    )
+
+
+def classify_ineligible_league_player_form(message: Message, body_text: str) -> ClassificationResult | None:
+    del body_text
+    from_address = (message.from_address or "").strip().casefold()
+    subject = (message.subject or "").strip()
+    subject_lower = subject.casefold()
+
+    if from_address not in FORMRESPONSE_SENDERS:
+        return None
+    if subject_lower.startswith(REPLY_PREFIXES):
+        return None
+    if not subject_lower.startswith(INELIGIBLE_LEAGUE_PLAYER_FORM_SUBJECT_PREFIX):
+        return None
+
+    return ClassificationResult(
+        category_name=INELIGIBLE_LEAGUE_PLAYER_FORM_CATEGORY,
+        subcategory_name=None,
+        reply_needed=False,
+        informational_only=True,
+        priority="low",
+        auto_ignore=True,
+        reason_summary=(
+            "Matched the ineligible league player form based on sender and subject prefix, "
+            "so the message can be categorized and auto-ignored during ingest."
+        ),
+        rule_code="ineligible_league_player_form_v1",
     )
 
 

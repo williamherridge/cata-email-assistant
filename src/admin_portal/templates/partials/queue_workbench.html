@@ -69,7 +69,7 @@
           <label>
             Priority
             <select name="priority">
-              {% for option in ["critical", "normal", "low"] %}
+              {% for option in ["critical", "high", "normal", "low"] %}
                 <option value="{{ option }}" {% if selected_message.priority == option %}selected{% endif %}>{{ option|title }}</option>
               {% endfor %}
             </select>
@@ -128,7 +128,12 @@
           class="button-secondary action-save-draft"
           formaction="/messages/{{ selected_message.id }}/draft"
         >Save Draft</button>
-        <button type="button" class="button-secondary action-regenerate" disabled>Regenerate</button>
+        <button
+          type="submit"
+          form="{{ selected_message.id }}-review-form"
+          class="button-secondary action-regenerate"
+          formaction="/messages/{{ selected_message.id }}/regenerate"
+        >Regenerate</button>
       </div>
       <div class="draft-surface" contenteditable="true" data-draft-editor>{{ draft_html|safe }}</div>
     </div>

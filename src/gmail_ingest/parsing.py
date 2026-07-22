@@ -124,6 +124,7 @@ class _SafeHTMLRenderer(HTMLParser):
         "div",
         "em",
         "hr",
+        "img",
         "i",
         "li",
         "ol",
@@ -141,7 +142,7 @@ class _SafeHTMLRenderer(HTMLParser):
         "ul",
     }
     _DROP_CONTENT_TAGS = {"head", "script", "style", "title"}
-    _VOID_TAGS = {"br", "hr"}
+    _VOID_TAGS = {"br", "hr", "img"}
 
     def __init__(self) -> None:
         super().__init__()
@@ -161,11 +162,24 @@ class _SafeHTMLRenderer(HTMLParser):
                 rendered_attrs.append(f'href="{escape(href, quote=True)}"')
                 rendered_attrs.append('target="_blank"')
                 rendered_attrs.append('rel="noopener noreferrer nofollow"')
+        elif tag == "img":
+            src = next((value for key, value in attrs if key == "src" and value), None)
+            if src and (src.startswith(("http://", "https://")) or src.startswith("data:image/")):
+                rendered_attrs.append(f'src="{escape(src, quote=True)}"')
+            alt = next((value for key, value in attrs if key == "alt" and value is not None), "")
+            rendered_attrs.append(f'alt="{escape(alt, quote=True)}"')
+            for key in ("width", "height"):
+                value = next((candidate for attr, candidate in attrs if attr == key and candidate), None)
+                if value and value.isdigit():
+                    rendered_attrs.append(f'{key}="{escape(value, quote=True)}"')
         elif tag in {"td", "th"}:
             for key in ("colspan", "rowspan"):
                 value = next((candidate for attr, candidate in attrs if attr == key and candidate), None)
                 if value and value.isdigit():
                     rendered_attrs.append(f'{key}="{escape(value, quote=True)}"')
+        style = next((value for key, value in attrs if key == "style" and value), None)
+        if style and tag in {"div", "img", "p", "span"}:
+            rendered_attrs.append(f'style="{escape(style, quote=True)}"')
         attr_suffix = f" {' '.join(rendered_attrs)}" if rendered_attrs else ""
         if tag in self._VOID_TAGS:
             self._output.append(f"<{tag}{attr_suffix}>")
