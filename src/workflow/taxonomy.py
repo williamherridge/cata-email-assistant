@@ -16,6 +16,13 @@ CATEGORY_NAME_NORMALIZATION = {
     "ineligible player for sectionals notification": "Ineligible player",
 }
 CATEGORY_PROFILES = {
+    "facility request": {
+        "description": "Structured facility request submissions captured from Tennis Austin web forms.",
+        "default_draft_behavior": "auto_ignore_candidate",
+        "default_reply_needed": False,
+        "default_informational_only": True,
+        "priority_hint": "low",
+    },
     "make-up match line up": {
         "description": "Structured CATA form submission that captures a make-up match lineup.",
         "default_draft_behavior": "auto_ignore_candidate",
@@ -99,6 +106,38 @@ def sync_taxonomy_catalog(session: Session, catalog_path: Path) -> int:
         session.add(category)
         existing.add(name.casefold())
         added += 1
+
+    if added or changed:
+        session.flush()
+
+    active_categories = {
+        category.name: category for category in session.scalars(select(Category).where(Category.is_active.is_(True)))
+    }
+    existing_subcategories = {
+        (subcategory.category_id, subcategory.name.casefold()): subcategory
+        for subcategory in session.scalars(select(Subcategory))
+    }
+    for entry in catalog.get("categories", []):
+        raw_name = str(entry.get("name", ""))
+        name = normalize_catalog_category_name(raw_name)
+        if not name:
+            continue
+        category = active_categories.get(name)
+        if category is None:
+            continue
+        for raw_subcategory in entry.get("subcategories", []):
+            subcategory_name = str(raw_subcategory).strip()
+            if not subcategory_name:
+                continue
+            key = (category.id, subcategory_name.casefold())
+            existing_subcategory = existing_subcategories.get(key)
+            if existing_subcategory is None:
+                session.add(Subcategory(category_id=category.id, name=subcategory_name, is_active=True))
+                existing_subcategories[key] = True
+                changed = True
+            elif not existing_subcategory.is_active:
+                existing_subcategory.is_active = True
+                changed = True
 
     if added or changed:
         session.commit()

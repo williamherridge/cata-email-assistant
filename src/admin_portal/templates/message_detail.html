@@ -173,7 +173,16 @@
     </div>
 
     <div class="panel body-card">
-      <h3>Body</h3>
+      <div class="section-header">
+        <div>
+          <h3>Body</h3>
+          {% if original_other_recipients %}
+            <div class="muted compact-meta-line">
+              <span>{{ original_other_recipients_label }}: {{ original_other_recipients|join(", ") }}</span>
+            </div>
+          {% endif %}
+        </div>
+      </div>
       {% if body_html %}
         <div class="message-body-preview html-body-preview">
           <div class="rendered-email-body">{{ body_html|safe }}</div>

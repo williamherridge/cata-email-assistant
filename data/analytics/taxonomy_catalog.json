@@ -30,6 +30,15 @@
       "usage_count": 3
     },
     {
+      "name": "Facility Request",
+      "parent_group": "",
+      "aliases": [],
+      "subcategories": [
+        "UT-W"
+      ],
+      "usage_count": 0
+    },
+    {
       "name": "Ineligible player",
       "parent_group": "",
       "aliases": [

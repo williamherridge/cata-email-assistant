@@ -23,6 +23,7 @@ from src.shared.database import get_db_session
 from src.workflow.taxonomy import list_active_categories, list_active_subcategories, sync_taxonomy_catalog
 from src.workflow.polling import (
     build_default_draft_html,
+    get_default_reply_to_addresses,
     build_reply_subject,
     ensure_default_mailbox,
     ensure_runtime_directories,
@@ -31,6 +32,7 @@ from src.workflow.polling import (
     get_ignore_source,
     get_reply_cc_addresses,
     get_reply_to_addresses,
+    get_self_identity_addresses,
     get_recent_poll_runs,
     has_prior_sent_reply,
     list_history_messages,
@@ -207,6 +209,52 @@ def build_queue_context(request: Request, **overrides):
     return context
 
 
+def _format_participant_display(participant) -> str:
+    display_name = (participant.display_name or "").strip()
+    email_address = (participant.email_address or "").strip()
+    if display_name and email_address:
+        return f"{display_name} <{email_address}>"
+    return email_address or display_name or "Unknown"
+
+
+def build_original_recipient_context(message) -> dict[str, list[str] | str]:
+    if message is None:
+        return {
+            "original_other_recipients": [],
+            "original_other_recipients_label": "Also included",
+        }
+
+    self_identity_addresses = get_self_identity_addresses(message)
+    reply_target_addresses = {address.strip().lower() for address in get_default_reply_to_addresses(message)}
+    sender_address = ((message.from_address or "") or "").strip().lower()
+    sender_display = ((message.from_display or "") or "").strip().lower()
+    recipients: list[str] = []
+    seen: set[str] = set()
+
+    for participant in sorted(message.participants, key=lambda item: (item.position_index, item.id)):
+        normalized_email = (participant.email_address or "").strip().lower()
+        normalized_name = (participant.display_name or "").strip().lower()
+        if normalized_email in self_identity_addresses:
+            continue
+        if normalized_email and normalized_email in reply_target_addresses:
+            continue
+        if sender_address and normalized_email == sender_address:
+            continue
+        if sender_display and normalized_name and normalized_name == sender_display:
+            continue
+        label = _format_participant_display(participant)
+        dedupe_key = normalized_email or label.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        recipients.append(label)
+
+    return {
+        "original_other_recipients": recipients,
+        "original_other_recipients_label": "Also included",
+    }
+
+
 def build_queue_selection_context(
     db: Session,
     *,
@@ -228,6 +276,7 @@ def build_queue_selection_context(
         "return_to_queue": build_queue_return_path(selected_id, filter_query),
         "categories": list_active_categories(db),
         "subcategories": list_active_subcategories(db),
+        **build_original_recipient_context(selected_message),
     }
 
 
@@ -445,6 +494,7 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
                 selected_body_text=read_body_artifact(selected_message) if selected_message else "",
                 selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
                 selected_ignore_source=get_ignore_source(selected_message) if selected_message else "",
+                **build_original_recipient_context(selected_message),
             ),
         )
     except Exception:
@@ -512,6 +562,7 @@ def message_detail_page(message_id: int, request: Request, db: Session = Depends
                 "categories": list_active_categories(db),
                 "subcategories": list_active_subcategories(db),
                 "sent_reply_records": read_sent_reply_records(message),
+                **build_original_recipient_context(message),
             },
         )
     except HTTPException:

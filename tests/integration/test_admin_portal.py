@@ -61,7 +61,7 @@ def test_queue_and_message_detail_render(tmp_path):
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     session = session_factory()
 
-    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    mailbox = Mailbox(gmail_address="casey@austintennis.org", display_name="Pilot Inbox", is_active=True)
     session.add(mailbox)
     session.flush()
 
@@ -75,7 +75,8 @@ def test_queue_and_message_detail_render(tmp_path):
         gmail_message_id="msg-1",
         subject="Registration question",
         rfc_message_id="<msg-1@example.com>",
-        from_address="parent@example.com",
+        from_display="Amy Mulvihill",
+        from_address="amy@tennisaustin.org",
         snippet="League registration opens next week.",
         status="new",
         draft_state="not_started",
@@ -89,9 +90,37 @@ def test_queue_and_message_detail_render(tmp_path):
     session.add(
         MessageParticipant(
             message_id=message.id,
+            participant_type="to",
+            display_name="League Member",
+            email_address="parent@example.com",
+            position_index=0,
+        )
+    )
+    session.add(
+        MessageParticipant(
+            message_id=message.id,
             participant_type="cc",
             display_name="Casey",
             email_address="casey@austintennis.org",
+            position_index=1,
+        )
+    )
+    session.add(
+        MessageParticipant(
+            message_id=message.id,
+            participant_type="cc",
+            display_name="Jane Flynn",
+            email_address="janesflynn9@icloud.com",
+            position_index=2,
+        )
+    )
+    session.add(
+        MessageParticipant(
+            message_id=message.id,
+            participant_type="cc",
+            display_name="Amy Mulvihill",
+            email_address="amy@austintennis.org",
+            position_index=3,
         )
     )
 
@@ -110,7 +139,7 @@ def test_queue_and_message_detail_render(tmp_path):
         thread_id=thread.id,
         gmail_message_id="msg-2",
         subject="Sent update",
-        from_address="pilot@cata.test",
+        from_address="casey@austintennis.org",
         snippet="This should stay out of the default queue.",
         status="new",
         draft_state="not_started",
@@ -218,7 +247,6 @@ def test_queue_and_message_detail_render(tmp_path):
         assert "Already ignored" not in queue_response.text
         assert "Original Email" in queue_response.text
         assert "Full Detail" in queue_response.text
-        assert 'name="draft_cc" value=""' in queue_response.text
         assert "Pilot send mode is active" not in queue_response.text
 
         filtered_search_response = client.get("/queue?search=Registration")
@@ -234,7 +262,11 @@ def test_queue_and_message_detail_render(tmp_path):
         assert queue_selection_response.status_code == 200
         assert 'data-queue-workbench' in queue_selection_response.text
         assert "Original Email" in queue_selection_response.text
-        assert "Hi Parent," in queue_selection_response.text
+        assert "Hi Amy," in queue_selection_response.text
+        assert 'name="draft_cc" value="parent@example.com, janesflynn9@icloud.com"' in queue_selection_response.text
+        assert "Also included: League Member &lt;parent@example.com&gt;, Jane Flynn &lt;janesflynn9@icloud.com&gt;" in queue_selection_response.text
+        assert "Casey &lt;casey@austintennis.org&gt;" not in queue_selection_response.text
+        assert "Amy Mulvihill &lt;amy@austintennis.org&gt;" not in queue_selection_response.text
 
         poll_runs_response = client.get("/poll-runs")
         assert poll_runs_response.status_code == 200
@@ -244,6 +276,7 @@ def test_queue_and_message_detail_render(tmp_path):
         assert detail_response.status_code == 200
         assert "League registration opens next week." in detail_response.text
         assert "parent@example.com" in detail_response.text
+        assert "Also included: League Member &lt;parent@example.com&gt;, Jane Flynn &lt;janesflynn9@icloud.com&gt;" in detail_response.text
 
         review_response = client.post(
             f"/messages/{message.id}/review",

@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     )
 
     default_gmail_address: str | None = Field(default=None, alias="DEFAULT_GMAIL_ADDRESS")
+    default_gmail_aliases: list[str] = Field(default_factory=list, alias="DEFAULT_GMAIL_ALIASES")
     default_gmail_display_name: str = Field(default="CATA Inbox", alias="DEFAULT_GMAIL_DISPLAY_NAME")
     gmail_oauth_credentials_path: Path = Field(
         default=REPO_ROOT / "config" / "credentials.json",
@@ -57,6 +59,17 @@ class Settings(BaseSettings):
         default="william@theherridges.com",
         alias="GMAIL_TEST_SEND_OVERRIDE",
     )
+
+    @field_validator("default_gmail_aliases", mode="before")
+    @classmethod
+    def parse_default_gmail_aliases(cls, value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
 
     @property
     def resolved_database_url(self) -> str:

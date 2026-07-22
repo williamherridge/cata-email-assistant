@@ -1,17 +1,17 @@
 # Session Handoff
 
-Last updated: July 21, 2026
+Last updated: July 22, 2026
 
 ## Repo
 
 - Path: `/Users/williamherridge/Documents/repos/cata-email-assistant`
 - Branch: `master`
-- Latest pushed commit: `3c3dde4` - `Refine queue workbench usability`
-- Remote status: local `master` is ahead with an additional queue workflow polish pass described below.
+- Latest pushed commit: `39cc7c1` - `Polish queue review workflow`
+- Remote status: local `master` currently has additional unpushed work covering recipient handling, mailbox self-alias logic, and new deterministic facility-request auto-ignore behavior.
 
 ## Working Tree
 
-- Current git status includes tracked queue/workbench follow-up updates plus one untracked local database file:
+- Current git status includes tracked product/runtime updates plus one untracked local database file:
   - `data/app.db`
 - The untracked `data/app.db` file is a local scratch SQLite file and should not be committed.
 
@@ -57,6 +57,7 @@ Last updated: July 21, 2026
 - Deterministic category handling now exists for:
   - `Make-up match line up`
   - `Team registration submission`
+  - `Facility Request > UT-W`
 
 ### Current deterministic behavior
 
@@ -85,6 +86,23 @@ Last updated: July 21, 2026
   - `priority = normal`
   - `default_draft_behavior = manual_registration_summary`
 
+`Facility Request > UT-W`
+
+- Matches structured facility-request submissions.
+- Uses:
+  - sender `web@site.tennisaustin.org`
+  - subject starting with `UT-W League Facility Request from`
+- Defaults:
+  - `informational_only = true`
+  - `reply_needed = false`
+  - `priority = low`
+  - `default_draft_behavior = auto_ignore_candidate`
+- Runtime behavior:
+  - deterministic classification assigns category `Facility Request`
+  - deterministic classification assigns subcategory `UT-W`
+  - matching messages are automatically moved to `ignored`
+  - a `message_ignored` audit event is written with workflow attribution
+
 ## Portal / Workbench Progress
 
 - Assigned category and subcategory now display correctly in the portal.
@@ -102,6 +120,9 @@ Last updated: July 21, 2026
 - After `Send` or `Ignore`, the queue automatically advances to the next message and restores keyboard-navigation focus.
 - The queue no longer shows the old blue `new` dot because every item on that screen is already `new`.
 - Original email HTML rendering no longer shows the large false top gap caused by wrapper whitespace around stored HTML bodies.
+- Original-email recipient context now surfaces the other non-self participants more clearly during review.
+- Reply drafting now defaults closer to `reply all` behavior for supported messages by pre-populating non-self recipients in `Cc`.
+- Mailbox self-identity handling now supports aliases and same-person variants more safely, reducing cases where Casey appears as an external recipient.
 
 ## Latest Queue / Workbench Usability Pass
 
@@ -241,22 +262,25 @@ Key rule:
 
 ## Recent Commits
 
+- `39cc7c1` `Polish queue review workflow`
 - `3c3dde4` `Refine queue workbench usability`
 - `3a80fee` `Improve queue navigation performance`
-- `5d07f2a` `Harden portal workflows and expand message history`
 
-## Current In-Progress Commit Content
+## Files Updated In The Current Working Pass
 
-Files updated in the current queue/workbench follow-up pass:
+Files updated in the current working pass:
 
+- [data/analytics/taxonomy_catalog.json](/Users/williamherridge/Documents/repos/cata-email-assistant/data/analytics/taxonomy_catalog.json)
 - [src/admin_portal/main.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/main.py)
+- [src/shared/config.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/shared/config.py)
+- [src/workflow/classification.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/workflow/classification.py)
 - [src/workflow/polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/workflow/polling.py)
-- [src/admin_portal/templates/base.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/base.html)
+- [src/workflow/taxonomy.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/workflow/taxonomy.py)
 - [src/admin_portal/templates/history.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/history.html)
 - [src/admin_portal/templates/message_detail.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/message_detail.html)
-- [src/admin_portal/templates/queue.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/queue.html)
 - [src/admin_portal/templates/partials/queue_workbench.html](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/templates/partials/queue_workbench.html)
 - [tests/integration/test_admin_portal.py](/Users/williamherridge/Documents/repos/cata-email-assistant/tests/integration/test_admin_portal.py)
+- [tests/unit/test_polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/tests/unit/test_polling.py)
 
 ## Last Verified Checks
 
@@ -274,6 +298,10 @@ Files updated in the current queue/workbench follow-up pass:
   - result: `1 passed`
 - `./.venv/bin/python3 -m compileall src`
   - completed successfully after the latest queue workflow and original-email whitespace fixes
+- `./.venv/bin/python3 -m pytest tests/unit/test_polling.py tests/integration/test_admin_portal.py -q`
+  - result: `18 passed`
+- `./.venv/bin/python3 -m compileall src`
+  - completed successfully after alias handling, recipient-summary cleanup, and facility-request auto-ignore updates
 
 ## Known Open Areas
 
@@ -283,11 +311,16 @@ Files updated in the current queue/workbench follow-up pass:
 - Queue/history pagination or list limiting will be needed later.
 - History screen does not yet use the same partial-pane update behavior as the queue screen.
 - `DEFAULT_GMAIL_ADDRESS` should still be set in local config even though the runtime now handles the unset case more efficiently.
+- If a local `.env` is introduced later, add Casey alias support there with `DEFAULT_GMAIL_ALIASES`.
+- Google Sheets automation requirements are intentionally deferred until after automatic polling is enabled.
 
 ## Next Recommended Step
 
-1. Compact and resume from this handoff when ready.
-2. Next likely product step: continue message categorization / deterministic routing work.
+1. Enable automatic polling based on the approved schedule in the requirements so ingest no longer depends on manual `Poll Now`.
+2. Immediately after automatic polling is in place, define and implement Google Sheets automation for the target email type(s):
+   - capture the full `RecipientList` row requirements then
+   - add Sheets API scope to the existing Google OAuth flow
+   - append rows during ingest before any programmatic ignore action that depends on the spreadsheet write
 3. Optional UX follow-up: apply the same partial-pane update pattern to the History screen.
 4. Revisit `Open In Gmail` fallback behavior if the Gmail browser deep-link issue persists.
 5. Later, apply a similar resilience pass to the CLI/export scripts.

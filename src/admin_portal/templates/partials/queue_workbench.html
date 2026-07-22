@@ -156,10 +156,19 @@
 
     <div class="panel compact-panel">
       <div class="section-header compact-header">
-        <h3>Original Email</h3>
-        {% if selected_message.attachments %}
-          <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
-        {% endif %}
+        <div>
+          <h3>Original Email</h3>
+          {% if original_other_recipients %}
+            <div class="muted compact-meta-line">
+              <span>{{ original_other_recipients_label }}: {{ original_other_recipients|join(", ") }}</span>
+            </div>
+          {% endif %}
+        </div>
+        <div>
+          {% if selected_message.attachments %}
+            <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
+          {% endif %}
+        </div>
       </div>
       <div class="message-body-preview {% if selected_body_html %}html-body-preview{% endif %}">
         {% if selected_body_html %}

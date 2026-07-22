@@ -315,7 +315,11 @@ def make_settings(tmp_path: Path):
         json.dumps(
             {
                 "updated_at": "2026-07-20T00:00:00",
-                "categories": [{"name": "Make-up match line up"}, {"name": "Team registration submission"}],
+                "categories": [
+                    {"name": "Make-up match line up"},
+                    {"name": "Team registration submission"},
+                    {"name": "Facility Request", "subcategories": ["UT-W"]},
+                ],
             }
         ),
         encoding="utf-8",
@@ -536,6 +540,74 @@ def test_team_registration_auto_classifies_when_league_and_level_are_split(monke
     assert result.reply_needed is False
     assert result.informational_only is False
     assert result.priority == "normal"
+
+
+def test_utw_facility_request_auto_classifies_and_auto_ignores(tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    polling.sync_taxonomy_catalog(session, settings.taxonomy_catalog_path)
+
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(
+        mailbox_id=mailbox.id,
+        gmail_thread_id="thread-utw-facility",
+        subject_canonical="UT-W League Facility Request from Jacob Sestak",
+    )
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-utw-facility",
+        subject="UT-W League Facility Request from Jacob Sestak",
+        from_display="Tennis Austin",
+        from_address="web@site.tennisaustin.org",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    body_path = tmp_path / "utw-facility.txt"
+    body_path.write_text("UT-W League Facility Request from Jacob Sestak", encoding="utf-8")
+    session.add(
+        MessageArtifact(
+            message_id=message.id,
+            artifact_type="normalized_body_text",
+            storage_uri=str(body_path),
+        )
+    )
+    session.commit()
+
+    refreshed_message = polling.get_message_detail(session, message.id)
+    assert refreshed_message is not None
+
+    category = polling.apply_deterministic_classification(session, refreshed_message)
+    session.flush()
+
+    session.expire_all()
+    classified = polling.get_message_detail(session, message.id)
+    assert category is not None
+    assert classified is not None
+    assert classified.assigned_category is not None
+    assert classified.assigned_category.name == "Facility Request"
+    assert classified.assigned_subcategory is not None
+    assert classified.assigned_subcategory.name == "UT-W"
+    assert classified.reply_needed is False
+    assert classified.informational_only is True
+    assert classified.priority == "low"
+    assert classified.status == "ignored"
+    assert classified.ignored_at is not None
+
+    event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
+    assert "message_auto_classified" in event_types
+    assert "message_ignored" in event_types
 
 
 def test_build_default_draft_html_uses_first_name_greeting():

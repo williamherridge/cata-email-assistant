@@ -31,6 +31,7 @@ from src.gmail_ingest.parsing import (
     sanitize_email_html,
 )
 from src.shared.config import Settings
+from src.shared.config import get_settings
 from src.workflow.classification import classify_message_deterministically
 from src.workflow.taxonomy import sync_taxonomy_catalog
 from src.shared.models import (
@@ -653,7 +654,18 @@ def apply_deterministic_classification(session: Session, message: Message) -> Ca
     if category is None:
         return None
 
+    subcategory = None
+    if result.subcategory_name:
+        subcategory = session.scalar(
+            select(Subcategory).where(
+                Subcategory.category_id == category.id,
+                Subcategory.name == result.subcategory_name,
+                Subcategory.is_active.is_(True),
+            )
+        )
+
     message.assigned_category_id = category.id
+    message.assigned_subcategory_id = subcategory.id if subcategory is not None else None
     if message.reply_needed is None:
         message.reply_needed = result.reply_needed
     message.informational_only = result.informational_only
@@ -668,16 +680,40 @@ def apply_deterministic_classification(session: Session, message: Message) -> Ca
             detail_json=json.dumps(
                 {
                     "category_name": category.name,
+                    "subcategory_name": subcategory.name if subcategory is not None else None,
                     "rule_code": result.rule_code,
                     "reason_summary": result.reason_summary,
                     "reply_needed": result.reply_needed,
                     "informational_only": result.informational_only,
                     "priority": normalize_priority(result.priority),
+                    "auto_ignore": result.auto_ignore,
                 },
                 sort_keys=True,
             ),
         )
     )
+
+    if result.auto_ignore and message.status != "ignored":
+        message.status = "ignored"
+        message.ignored_at = utcnow()
+        session.add(
+            AuditEvent(
+                mailbox_id=message.mailbox_id,
+                message_id=message.id,
+                event_type="message_ignored",
+                actor_type="workflow",
+                summary="Message was automatically ignored by deterministic classification.",
+                detail_json=json.dumps(
+                    {
+                        "category_name": category.name,
+                        "subcategory_name": subcategory.name if subcategory is not None else None,
+                        "rule_code": result.rule_code,
+                        "source": "deterministic_classification",
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
     return category
 
 
@@ -1365,6 +1401,42 @@ def is_sent_message(message: Message) -> bool:
     return bool(mailbox_address and from_address and mailbox_address.casefold() == from_address.casefold())
 
 
+def normalize_participant_name(value: str | None) -> str:
+    normalized = (value or "").strip().casefold()
+    normalized = re.sub(r"^(cata\s*-\s*|cata\s+)", "", normalized)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def get_self_identity_addresses(message: Message) -> set[str]:
+    settings = get_settings()
+    identities: set[str] = set()
+    mailbox_address = ((message.mailbox.gmail_address if message.mailbox else "") or "").strip().casefold()
+    if mailbox_address:
+        identities.add(mailbox_address)
+    for alias in settings.default_gmail_aliases:
+        normalized_alias = str(alias).strip().casefold()
+        if normalized_alias:
+            identities.add(normalized_alias)
+
+    self_names: set[str] = set()
+    for participant in message.participants:
+        participant_email = ((participant.email_address or "") or "").strip().casefold()
+        if participant_email and participant_email in identities:
+            normalized_name = normalize_participant_name(participant.display_name)
+            if normalized_name:
+                self_names.add(normalized_name)
+
+    if self_names:
+        for participant in message.participants:
+            normalized_name = normalize_participant_name(participant.display_name)
+            participant_email = ((participant.email_address or "") or "").strip().casefold()
+            if normalized_name and participant_email and normalized_name in self_names:
+                identities.add(participant_email)
+
+    return identities
+
+
 def get_reply_to_addresses(message: Message) -> str:
     saved = read_saved_draft_record(message)
     if saved is not None:
@@ -1374,11 +1446,42 @@ def get_reply_to_addresses(message: Message) -> str:
     return ""
 
 
+def get_default_reply_to_addresses(message: Message) -> list[str]:
+    reply_to_addresses = normalize_email_list(message.from_address)
+    if reply_to_addresses:
+        return reply_to_addresses
+    return []
+
+
 def get_reply_cc_addresses(message: Message) -> str:
     saved = read_saved_draft_record(message)
     if saved is not None:
         return str(saved.get("draft_cc") or "")
-    return ""
+    self_identity_addresses = get_self_identity_addresses(message)
+    reply_target_addresses = {address.casefold() for address in get_default_reply_to_addresses(message)}
+    sender_address = ((message.from_address or "") or "").strip().casefold()
+    sender_display = ((message.from_display or "") or "").strip().casefold()
+    cc_addresses: list[str] = []
+    seen: set[str] = set()
+    for participant in sorted(message.participants, key=lambda item: (item.position_index, item.id)):
+        participant_email = ((participant.email_address or "") or "").strip()
+        normalized_email = participant_email.casefold()
+        normalized_name = ((participant.display_name or "") or "").strip().casefold()
+        if not participant_email:
+            continue
+        if normalized_email in self_identity_addresses:
+            continue
+        if normalized_email in reply_target_addresses:
+            continue
+        if sender_address and normalized_email == sender_address:
+            continue
+        if sender_display and normalized_name and normalized_name == sender_display:
+            continue
+        if normalized_email in seen:
+            continue
+        seen.add(normalized_email)
+        cc_addresses.append(participant_email)
+    return ", ".join(cc_addresses)
 
 
 def has_prior_sent_reply(message: Message) -> bool:
