@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from email.utils import getaddresses
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -34,6 +34,8 @@ from src.shared.config import Settings
 from src.shared.config import get_settings
 from src.workflow.classification import classify_message_deterministically
 from src.workflow.taxonomy import sync_taxonomy_catalog
+from src.shared.timezones import normalize_utc_to_local
+from src.shared.timezones import resolve_local_timezone
 from src.shared.models import (
     AuditEvent,
     Category,
@@ -67,6 +69,15 @@ class PollOutcome:
     poll_run_id: int
     messages_discovered: int
     messages_persisted: int
+
+
+@dataclass
+class ScheduledPollResult:
+    total_mailboxes: int
+    due_mailboxes: int
+    polled_mailboxes: int
+    failed_mailboxes: int
+    skipped_mailboxes: int
 
 
 @dataclass
@@ -373,6 +384,113 @@ def transition_message_status(session: Session, message_id: int, status: str) ->
 def get_recent_poll_runs(session: Session, limit: int = 10) -> list[PollRun]:
     statement = select(PollRun).options(selectinload(PollRun.mailbox)).order_by(desc(PollRun.started_at)).limit(limit)
     return list(session.scalars(statement))
+
+
+def get_poll_schedule_interval_minutes(settings: Settings, current_time: time) -> int:
+    day_start = settings.gmail_poll_day_start_hour
+    day_end = settings.gmail_poll_day_end_hour
+    current_minutes = current_time.hour * 60 + current_time.minute
+    day_start_minutes = day_start * 60
+    day_end_minutes = day_end * 60
+    if day_start_minutes <= current_minutes <= day_end_minutes:
+        return settings.gmail_poll_day_interval_minutes
+    return settings.gmail_poll_offhours_interval_minutes
+
+
+def get_latest_scheduled_poll_slot(settings: Settings, now: datetime | None = None) -> datetime:
+    local_timezone = resolve_local_timezone(settings.display_timezone)
+    reference = now or datetime.now(local_timezone)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=local_timezone)
+    else:
+        reference = reference.astimezone(local_timezone)
+
+    day_start_minutes = settings.gmail_poll_day_start_hour * 60
+    day_end_minutes = settings.gmail_poll_day_end_hour * 60
+    current_minutes = reference.hour * 60 + reference.minute
+    current_date: date = reference.date()
+
+    if day_start_minutes <= current_minutes <= day_end_minutes:
+        minutes_since_day_start = current_minutes - day_start_minutes
+        slot_offset = (minutes_since_day_start // settings.gmail_poll_day_interval_minutes) * (
+            settings.gmail_poll_day_interval_minutes
+        )
+        slot_minutes = day_start_minutes + slot_offset
+        slot_hour, slot_minute = divmod(slot_minutes, 60)
+        return datetime.combine(current_date, time(hour=slot_hour, minute=slot_minute), tzinfo=reference.tzinfo)
+
+    offhours_anchor_date = current_date if current_minutes > day_end_minutes else current_date - timedelta(days=1)
+    offhours_anchor = datetime.combine(
+        offhours_anchor_date,
+        time(hour=settings.gmail_poll_day_end_hour, minute=0),
+        tzinfo=reference.tzinfo,
+    )
+    elapsed_minutes = max(int((reference - offhours_anchor).total_seconds() // 60), 0)
+    slot_offset = (elapsed_minutes // settings.gmail_poll_offhours_interval_minutes) * (
+        settings.gmail_poll_offhours_interval_minutes
+    )
+    return offhours_anchor + timedelta(minutes=slot_offset)
+
+
+def is_mailbox_due_for_scheduled_poll(
+    mailbox: Mailbox,
+    settings: Settings,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    latest_slot = get_latest_scheduled_poll_slot(settings, now)
+    if mailbox.last_polled_at is None:
+        return True
+
+    last_polled_local = normalize_utc_to_local(mailbox.last_polled_at, settings.display_timezone)
+    return last_polled_local < latest_slot
+
+
+def get_due_mailboxes_for_scheduled_poll(
+    session: Session,
+    settings: Settings,
+    *,
+    now: datetime | None = None,
+) -> list[Mailbox]:
+    mailboxes = list(
+        session.scalars(
+            select(Mailbox).where(Mailbox.is_active.is_(True)).order_by(Mailbox.id)
+        )
+    )
+    return [mailbox for mailbox in mailboxes if is_mailbox_due_for_scheduled_poll(mailbox, settings, now=now)]
+
+
+def run_scheduled_poll_cycle(
+    session: Session,
+    settings: Settings,
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> ScheduledPollResult:
+    ensure_runtime_directories(settings)
+    mailboxes = list(session.scalars(select(Mailbox).where(Mailbox.is_active.is_(True)).order_by(Mailbox.id)))
+    due_mailboxes = mailboxes if force else [
+        mailbox for mailbox in mailboxes if is_mailbox_due_for_scheduled_poll(mailbox, settings, now=now)
+    ]
+
+    polled_mailboxes = 0
+    failed_mailboxes = 0
+    for mailbox in due_mailboxes:
+        try:
+            poll_mailbox(session, settings, mailbox.id, trigger_source="scheduler")
+            polled_mailboxes += 1
+        except Exception:
+            failed_mailboxes += 1
+            session.rollback()
+            logger.exception("Scheduled polling failed for mailbox %s.", mailbox.id)
+
+    return ScheduledPollResult(
+        total_mailboxes=len(mailboxes),
+        due_mailboxes=len(due_mailboxes),
+        polled_mailboxes=polled_mailboxes,
+        failed_mailboxes=failed_mailboxes,
+        skipped_mailboxes=max(len(mailboxes) - len(due_mailboxes), 0),
+    )
 
 
 def poll_mailbox(session: Session, settings: Settings, mailbox_id: int, trigger_source: str = "portal") -> PollOutcome:

@@ -6,8 +6,8 @@ Last updated: July 22, 2026
 
 - Path: `/Users/williamherridge/Documents/repos/cata-email-assistant`
 - Branch: `master`
-- Latest pushed commit: `4082964` - `Refresh session handoff after push`
-- Remote status: local `master` and `origin/master` are in sync at `4082964`.
+- Latest pushed commit: `e2db65f` - `Correct handoff commit reference`
+- Remote status: local `master` and `origin/master` are in sync at `e2db65f`.
 
 ## Working Tree
 
@@ -48,6 +48,7 @@ Last updated: July 22, 2026
 - Tennis Austin logo assets are now included in the draft signature.
 - Queue navigation performance was improved for cross-device use on the local network.
 - Queue/workbench usability was substantially refined after the performance pass.
+- Automatic scheduled polling support is now implemented for the lean pilot runtime.
 
 ## Taxonomy And Classification Progress
 
@@ -314,13 +315,42 @@ Files updated in the latest pass:
 - If a local `.env` is introduced later, add Casey alias support there with `DEFAULT_GMAIL_ALIASES`.
 - Google Sheets automation requirements are intentionally deferred until after automatic polling is enabled.
 
+## Automatic Polling Pass
+
+- A scheduled polling runner now exists for the lean pilot host runtime.
+- The scheduler flow is designed so the host can invoke one simple command frequently while the app itself decides whether polling is actually due.
+- Default cadence matches the approved requirement:
+  - every 15 minutes from 7:00 AM through 7:00 PM local time
+  - every 2 hours outside that window
+- The runner:
+  - checks all active mailboxes
+  - skips mailboxes that are not due yet
+  - continues safely if one mailbox poll fails
+  - records scheduled polls with trigger source `scheduler`
+
+### New command
+
+- `./.venv/bin/python3 scripts/run_scheduled_poll.py`
+
+### Supporting docs
+
+- [docs/operations/automatic_polling_setup.md](/Users/williamherridge/Documents/repos/cata-email-assistant/docs/operations/automatic_polling_setup.md)
+
+### Relevant code
+
+- [scripts/run_scheduled_poll.py](/Users/williamherridge/Documents/repos/cata-email-assistant/scripts/run_scheduled_poll.py)
+- [src/shared/timezones.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/shared/timezones.py)
+- [src/shared/config.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/shared/config.py)
+- [src/workflow/polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/workflow/polling.py)
+- [tests/unit/test_polling.py](/Users/williamherridge/Documents/repos/cata-email-assistant/tests/unit/test_polling.py)
+
 ## Next Recommended Step
 
-1. Enable automatic polling based on the approved schedule in the requirements so ingest no longer depends on manual `Poll Now`.
-2. Immediately after automatic polling is in place, define and implement Google Sheets automation for the target email type(s):
+1. Define and implement Google Sheets automation for the target email type(s):
    - capture the full `RecipientList` row requirements then
    - add Sheets API scope to the existing Google OAuth flow
    - append rows during ingest before any programmatic ignore action that depends on the spreadsheet write
+2. Install the scheduled polling runner on the host with `launchd` or equivalent and verify it runs unattended.
 3. Optional UX follow-up: apply the same partial-pane update pattern to the History screen.
 4. Revisit `Open In Gmail` fallback behavior if the Gmail browser deep-link issue persists.
 5. Later, apply a similar resilience pass to the CLI/export scripts.

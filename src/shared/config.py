@@ -59,6 +59,10 @@ class Settings(BaseSettings):
         default="william@theherridges.com",
         alias="GMAIL_TEST_SEND_OVERRIDE",
     )
+    gmail_poll_day_start_hour: int = Field(default=7, alias="GMAIL_POLL_DAY_START_HOUR")
+    gmail_poll_day_end_hour: int = Field(default=19, alias="GMAIL_POLL_DAY_END_HOUR")
+    gmail_poll_day_interval_minutes: int = Field(default=15, alias="GMAIL_POLL_DAY_INTERVAL_MINUTES")
+    gmail_poll_offhours_interval_minutes: int = Field(default=120, alias="GMAIL_POLL_OFFHOURS_INTERVAL_MINUTES")
 
     @field_validator("default_gmail_aliases", mode="before")
     @classmethod
@@ -70,6 +74,28 @@ class Settings(BaseSettings):
         if isinstance(value, (list, tuple, set)):
             return [str(item).strip() for item in value if str(item).strip()]
         return []
+
+    @field_validator(
+        "gmail_poll_day_start_hour",
+        "gmail_poll_day_end_hour",
+        mode="after",
+    )
+    @classmethod
+    def validate_poll_hours(cls, value: int) -> int:
+        if value < 0 or value > 23:
+            raise ValueError("Polling schedule hours must be between 0 and 23.")
+        return value
+
+    @field_validator(
+        "gmail_poll_day_interval_minutes",
+        "gmail_poll_offhours_interval_minutes",
+        mode="after",
+    )
+    @classmethod
+    def validate_poll_intervals(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("Polling intervals must be greater than zero.")
+        return value
 
     @property
     def resolved_database_url(self) -> str:

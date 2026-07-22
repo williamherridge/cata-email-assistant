@@ -1,5 +1,7 @@
 import json
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
 from sqlalchemy import create_engine, select
@@ -330,12 +332,17 @@ def make_settings(tmp_path: Path):
         {
             "artifact_root": tmp_path / "artifacts",
             "database_url": f"sqlite:///{tmp_path / 'test.db'}",
+            "display_timezone": "America/Chicago",
             "default_gmail_address": "pilot@cata.test",
             "default_gmail_display_name": "Pilot Inbox",
             "gmail_oauth_credentials_path": Path("config/credentials.json"),
             "gmail_oauth_token_path": Path("config/token.json"),
             "gmail_initial_sync_days": 30,
             "gmail_initial_sync_max_results": 50,
+            "gmail_poll_day_start_hour": 7,
+            "gmail_poll_day_end_hour": 19,
+            "gmail_poll_day_interval_minutes": 15,
+            "gmail_poll_offhours_interval_minutes": 120,
             "taxonomy_catalog_path": taxonomy_catalog_path,
             "resolved_artifact_root": tmp_path / "artifacts",
             "resolved_database_url": f"sqlite:///{tmp_path / 'test.db'}",
@@ -624,6 +631,79 @@ def test_build_default_draft_html_uses_first_name_greeting():
 
     assert "Hi Jane," in draft_html
     assert "Hello Jane Flynn" not in draft_html
+
+
+def test_get_latest_scheduled_poll_slot_uses_daytime_quarter_hour(tmp_path):
+    settings = make_settings(tmp_path)
+
+    slot = polling.get_latest_scheduled_poll_slot(
+        settings,
+        datetime(2026, 7, 22, 14, 37, tzinfo=ZoneInfo("America/Chicago")),
+    )
+
+    assert slot == datetime(2026, 7, 22, 14, 30, tzinfo=ZoneInfo("America/Chicago"))
+
+
+def test_get_latest_scheduled_poll_slot_keeps_last_daytime_slot_after_7pm(tmp_path):
+    settings = make_settings(tmp_path)
+
+    slot = polling.get_latest_scheduled_poll_slot(
+        settings,
+        datetime(2026, 7, 22, 19, 15, tzinfo=ZoneInfo("America/Chicago")),
+    )
+
+    assert slot == datetime(2026, 7, 22, 19, 0, tzinfo=ZoneInfo("America/Chicago"))
+
+
+def test_is_mailbox_due_for_scheduled_poll_respects_latest_slot(tmp_path):
+    settings = make_settings(tmp_path)
+
+    mailbox = Mailbox(
+        gmail_address="pilot@cata.test",
+        display_name="Pilot Inbox",
+        is_active=True,
+        last_polled_at=datetime(2026, 7, 22, 23, 50),
+    )
+
+    due = polling.is_mailbox_due_for_scheduled_poll(
+        mailbox,
+        settings,
+        now=datetime(2026, 7, 22, 19, 15, tzinfo=ZoneInfo("America/Chicago")),
+    )
+
+    assert due is True
+
+
+def test_run_scheduled_poll_cycle_only_polls_due_mailboxes(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    due_mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    skipped_mailbox = Mailbox(
+        gmail_address="recent@cata.test",
+        display_name="Recent Inbox",
+        is_active=True,
+        last_polled_at=datetime(2026, 7, 23, 0, 5),
+    )
+    session.add_all([due_mailbox, skipped_mailbox])
+    session.commit()
+
+    monkeypatch.setattr(polling, "GmailClient", FakeGmailClient)
+
+    result = polling.run_scheduled_poll_cycle(
+        session,
+        settings,
+        now=datetime(2026, 7, 22, 19, 15, tzinfo=ZoneInfo("America/Chicago")),
+    )
+
+    assert result.total_mailboxes == 2
+    assert result.due_mailboxes == 1
+    assert result.polled_mailboxes == 1
+    assert result.failed_mailboxes == 0
+    assert result.skipped_mailboxes == 1
+
+    poll_runs = session.scalars(select(PollRun).order_by(PollRun.id)).all()
+    assert len(poll_runs) == 1
+    assert poll_runs[0].trigger_source == "scheduler"
 
 
 def test_first_name_from_sender_handles_display_and_email_variants():

@@ -2,26 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from datetime import date, datetime, timedelta
+
+from src.shared.timezones import normalize_utc_to_local
+from src.shared.timezones import resolve_local_timezone
 
 
-DEFAULT_DISPLAY_TIMEZONE = "America/Chicago"
-
-
-def resolve_display_timezone(configured_timezone: str | None = None) -> ZoneInfo | datetime.tzinfo:
+def resolve_display_timezone(configured_timezone: str | None = None) -> datetime.tzinfo:
     """Return the configured or local timezone, with Central fallback."""
-    if configured_timezone:
-        try:
-            return ZoneInfo(configured_timezone)
-        except ZoneInfoNotFoundError:
-            pass
-
-    local_timezone = datetime.now().astimezone().tzinfo
-    if local_timezone is not None:
-        return local_timezone
-
-    return ZoneInfo(DEFAULT_DISPLAY_TIMEZONE)
+    return resolve_local_timezone(configured_timezone)
 
 
 def format_portal_datetime(value: datetime | None, timezone_name: str | None = None) -> str:
@@ -70,12 +59,7 @@ def _format_portal_datetime(
 
 
 def _normalize_local_datetime(value: datetime, timezone_name: str | None) -> datetime:
-    display_timezone = resolve_display_timezone(timezone_name)
-    if value.tzinfo is None:
-        normalized = value.replace(tzinfo=UTC)
-    else:
-        normalized = value.astimezone(UTC)
-    return normalized.astimezone(display_timezone)
+    return normalize_utc_to_local(value, timezone_name)
 
 
 def _format_time(value: datetime) -> str:
