@@ -6,12 +6,12 @@ Last updated: July 22, 2026
 
 - Path: `/Users/williamherridge/Documents/repos/cata-email-assistant`
 - Branch: `master`
-- Latest pushed commit: `39cc7c1` - `Polish queue review workflow`
-- Remote status: local `master` currently has additional unpushed work covering recipient handling, mailbox self-alias logic, and new deterministic facility-request auto-ignore behavior.
+- Latest pushed commit: `4b4e117` - `Improve recipient routing and auto-ignore facility requests`
+- Remote status: local `master` and `origin/master` are in sync at `4b4e117`.
 
 ## Working Tree
 
-- Current git status includes tracked product/runtime updates plus one untracked local database file:
+- Current git status is clean except for one untracked local database file:
   - `data/app.db`
 - The untracked `data/app.db` file is a local scratch SQLite file and should not be committed.
 
@@ -266,9 +266,9 @@ Key rule:
 - `3c3dde4` `Refine queue workbench usability`
 - `3a80fee` `Improve queue navigation performance`
 
-## Files Updated In The Current Working Pass
+## Files Updated In The Latest Pass
 
-Files updated in the current working pass:
+Files updated in the latest pass:
 
 - [data/analytics/taxonomy_catalog.json](/Users/williamherridge/Documents/repos/cata-email-assistant/data/analytics/taxonomy_catalog.json)
 - [src/admin_portal/main.py](/Users/williamherridge/Documents/repos/cata-email-assistant/src/admin_portal/main.py)
