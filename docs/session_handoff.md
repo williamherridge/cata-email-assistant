@@ -1,13 +1,13 @@
 # Session Handoff
 
-Last updated: July 22, 2026
+Last updated: July 23, 2026
 
 ## Repo
 
 - Path: `/Users/williamherridge/Documents/repos/cata-email-assistant`
 - Branch: `master`
-- Latest pushed commit: `02ee6b2` - `Expand pilot workflow automation and review tooling`
-- Remote status: local `master` and `origin/master` are in sync at `02ee6b2`.
+- Latest pushed commit: check `git log -1 --oneline` after pull/push if you need the exact SHA.
+- Remote status: this handoff assumes `master` is the active branch and `data/app.db` remains local-only.
 
 ## Working Tree
 
@@ -50,6 +50,7 @@ Last updated: July 22, 2026
 - Queue/workbench usability was substantially refined after the performance pass.
 - Automatic scheduled polling support is now implemented for the lean pilot runtime.
 - Google Sheets integration scaffolding now exists for deterministic spreadsheet workflows tied to Gmail ingest.
+- Google Sheets auth is now separated from Gmail auth so the Sheets token can be re-authorized independently.
 
 ## Taxonomy And Classification Progress
 
@@ -145,6 +146,12 @@ Last updated: July 22, 2026
   - `Closed but Seeking`
   - `Open Team`
 - Successful sheet insertions mark the message `processed`.
+- Rows appended to the RecipientList now copy formula cells from the previous row for:
+  - `Minimum Roster`
+  - `Max Roster`
+  - `Format`
+  - `RosterDueDate`
+  - `SeasonStartDate`
 - Blocked team registrations:
   - do not append to the sheet
   - save a generated reply draft to the captain
@@ -154,6 +161,7 @@ Last updated: July 22, 2026
   - checks uniqueness using `Team Name + Captain(s) + League`
   - does not overwrite an existing row
   - sends an admin alert instead
+- Facility permission rule now treats `UT Whitaker` as auto-allowed even if the permission flag is not set.
 - Verified live example:
   - internal message `348`
   - row inserted into `RecipientList`
@@ -195,6 +203,7 @@ Last updated: July 22, 2026
   - use the admin mailbox in `Cc`
   - greet the captain by first name
   - preserve the agreed signature formatting and Tennis Austin logo
+- `Make-up match line up` messages are now auto-ignored deterministically instead of lingering in queue.
 
 ## Latest Queue / Workbench Usability Pass
 
@@ -238,6 +247,24 @@ The latest pass focused on making the desktop queue and workbench feel closer to
   - subtitle removed
   - `Queue` and `History` stay on the same line as the title
 - Queue header was compressed into a tighter single-line treatment.
+
+### Additional vertical-space compaction completed on July 23
+
+- Visible app title is now `League Assistant`.
+- `Queue` and `History` buttons now visually highlight the active view.
+- Poll summary was moved into the top header row and trimmed to:
+  - latest status
+  - `View All`
+  - latest poll time
+- The queue workbench no longer exposes `Informational only` in the compact review controls, but saves preserve the current stored value.
+- `Save Review` was shortened to `Save`.
+- `Ignore` now sits on the same row as category/review controls.
+- Draft editor height and panel spacing were reduced so more of the original message is visible without scrolling.
+- Generated signature spacing was tightened to remove extra blank space under the Tennis Austin logo.
+- In the top workbench panel:
+  - the original subject is now the `Full Detail` link
+  - the editable reply subject moved to the same top row
+- `Open in Gmail` now lives in the `Original Email` header row to avoid consuming extra vertical space.
 - Queue and workbench panels use tighter padding and reduced vertical gaps.
 - Review controls now use denser inline layout:
   - `To`, `Cc`, and `Subject` use inline labels

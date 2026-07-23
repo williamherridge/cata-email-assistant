@@ -1,4 +1,4 @@
-"""FastAPI entrypoint for the CATA admin portal."""
+"""FastAPI entrypoint for the League Assistant admin portal."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="CATA Email Assistant", lifespan=lifespan)
+app = FastAPI(title="League Assistant", lifespan=lifespan)
 PAGE_ERROR_MESSAGES = {
     "history_load_failed": "History could not be fully loaded. The app stayed online, but some data could not be read.",
     "mailbox_poll_failed": "Polling did not complete. The app stayed online, but Gmail or stored data returned an unexpected error.",

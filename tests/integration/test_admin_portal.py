@@ -246,7 +246,7 @@ def test_queue_and_message_detail_render(tmp_path):
         assert "Sent update" not in queue_response.text
         assert "Already ignored" not in queue_response.text
         assert "Original Email" in queue_response.text
-        assert "Full Detail" in queue_response.text
+        assert f'href="/messages/{message.id}"' in queue_response.text
         assert "Pilot send mode is active" not in queue_response.text
 
         filtered_search_response = client.get("/queue?search=Registration")

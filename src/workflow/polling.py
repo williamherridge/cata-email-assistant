@@ -329,7 +329,7 @@ def update_message_review(
     message_id: int,
     *,
     priority: str,
-    informational_only: bool,
+    informational_only: bool | None,
     reply_needed: bool | None,
     assigned_category_id: int | None,
     assigned_subcategory_id: int | None,
@@ -352,11 +352,12 @@ def update_message_review(
 
     updates = {
         "priority": normalized_priority,
-        "informational_only": informational_only,
         "reply_needed": reply_needed,
         "assigned_category_id": assigned_category_id,
         "assigned_subcategory_id": assigned_subcategory_id,
     }
+    if informational_only is not None:
+        updates["informational_only"] = informational_only
     for field_name, new_value in updates.items():
         old_value = getattr(message, field_name)
         if old_value != new_value:
@@ -1554,9 +1555,16 @@ def parse_review_form(body: bytes) -> dict[str, object]:
     else:
         reply_needed = None
 
+    informational_only_raw = parsed.get("informational_only", [])
+    informational_only: bool | None
+    if not informational_only_raw:
+        informational_only = None
+    else:
+        informational_only = (informational_only_raw[-1] or "").strip().lower() in {"1", "true", "yes", "on"}
+
     return {
         "priority": priority,
-        "informational_only": "informational_only" in parsed,
+        "informational_only": informational_only,
         "reply_needed": reply_needed,
         "assigned_category_id": normalize_optional_int(parsed.get("assigned_category_id", [""])[0]),
         "assigned_subcategory_id": normalize_optional_int(parsed.get("assigned_subcategory_id", [""])[0]),
@@ -2033,22 +2041,19 @@ def build_reply_html_with_signature(recipient_name: str, body_paragraphs: list[s
             f'<p style="margin: 0 0 0.35rem; font-family: Aptos, Calibri, sans-serif; '
             f'font-size: 12pt; font-weight: 400;">Hi {html.escape(recipient_name)},</p>'
         ),
-        '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>',
     ]
     for paragraph in body_paragraphs:
         html_parts.append(
-            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">'
+            '<p style="margin: 0 0 0.35rem; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">'
             f"{paragraph}"
             "</p>"
         )
     html_parts.extend(
         [
-            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>',
-            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Thank you,</p>',
-            '<p style="margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>',
+            '<p style="margin: 0 0 0.16rem; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Thank you,</p>',
             '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 700;">Casey Herridge</p>',
             '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 400;">Leagues Director | (210) 275.3173</p>',
-            '<p style="margin: 0; line-height: 1.1;">'
+            '<p style="margin: 0 0 0.08rem; line-height: 1.05;">'
             '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;">Capital Area Tennis Association </span>'
             '<span style="font-family: Tahoma, sans-serif; font-size: 5pt; font-weight: 400;">d/b/a</span>'
             '<span style="font-family: Tahoma, sans-serif; font-size: 9pt; font-weight: 400;"> Tennis Austin</span>'
@@ -2072,7 +2077,7 @@ def build_default_signature_logo_html() -> str:
         _DEFAULT_SIGNATURE_LOGO_HTML = ""
         return ""
     _DEFAULT_SIGNATURE_LOGO_HTML = (
-        '<div style="margin-top: 4px;">'
+        '<div style="margin-top: 2px;">'
         '<img '
         f'src="data:image/webp;base64,{encoded}" '
         'alt="Tennis Austin" '

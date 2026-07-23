@@ -2,30 +2,30 @@
   {% if selected_message %}
     <div class="panel compact-panel">
       <div class="section-header compact-header">
-        <div>
-          <h3 style="margin-bottom: 0.15rem;">{{ selected_message.subject or "(No subject)" }}</h3>
-          <div class="muted compact-meta-line">
-            {{ selected_message.from_display or selected_message.from_address or "Unknown" }}
-            {% if selected_message.received_at %}
-              <span>|</span> {{ selected_message.received_at|portal_datetime }}
-            {% endif %}
+        <div class="workbench-header-row">
+          <div>
+            <h3 style="margin-bottom: 0.15rem;">
+              <a href="/messages/{{ selected_message.id }}" class="subject-link">{{ selected_message.subject or "(No subject)" }}</a>
+            </h3>
+            <div class="muted compact-meta-line">
+              {{ selected_message.from_display or selected_message.from_address or "Unknown" }}
+              {% if selected_message.received_at %}
+                <span>|</span> {{ selected_message.received_at|portal_datetime }}
+              {% endif %}
+            </div>
           </div>
-        </div>
-        <div class="button-row compact-button-row">
-          <a href="/messages/{{ selected_message.id }}" class="link-button">Full Detail</a>
-          {% if selected_message.thread %}
-            <a
-              href="https://mail.google.com/mail/u/0/#all/{{ selected_message.thread.gmail_thread_id }}"
-              class="link-button"
-              target="_blank"
-              rel="noreferrer"
-            >Open In Gmail</a>
-          {% endif %}
+          <div class="workbench-subject-editor">
+            <label>
+              Subject
+              <input type="text" name="draft_subject" value="{{ reply_subject }}" form="{{ selected_message.id }}-review-form" />
+            </label>
+          </div>
         </div>
       </div>
 
       <form id="{{ selected_message.id }}-review-form" action="/messages/{{ selected_message.id }}/review" method="post" class="stack" data-draft-form>
         <input type="hidden" name="return_to" value="{{ return_to_queue }}" />
+        <input type="hidden" name="informational_only" value="{% if selected_message.informational_only %}1{% else %}0{% endif %}" />
         <div class="inline-label-grid">
           <div class="inline-field">
             <div class="inline-field-label">To</div>
@@ -35,13 +35,16 @@
             <div class="inline-field-label">Cc</div>
             <input type="text" name="draft_cc" value="{{ reply_cc_addresses }}" />
           </div>
-          <div class="inline-field-label subject-label">Subject</div>
-          <div class="subject-input">
-            <input type="text" name="draft_subject" value="{{ reply_subject }}" />
-          </div>
         </div>
 
         <div class="inline-select-grid review-select-grid">
+          <div class="review-save-slot">
+            <button
+              type="submit"
+              class="button-warn action-ignore"
+              formaction="/messages/{{ selected_message.id }}/ignore"
+            >Ignore</button>
+          </div>
           <label>
             Category
             <select name="assigned_category_id">
@@ -83,21 +86,8 @@
             </select>
           </label>
           <div class="review-save-slot">
-            <button type="submit">Save Review</button>
+            <button type="submit">Save</button>
           </div>
-        </div>
-
-        <div class="inline-checkbox-action-row">
-          <button
-            type="submit"
-            class="button-warn action-ignore"
-            formaction="/messages/{{ selected_message.id }}/ignore"
-          >Ignore</button>
-
-          <label class="checkbox-row">
-            <input type="checkbox" name="informational_only" value="1" {% if selected_message.informational_only %}checked{% endif %} />
-            Informational only
-          </label>
         </div>
 
         <input type="hidden" name="draft_html" value="" data-draft-input />
@@ -169,7 +159,15 @@
             </div>
           {% endif %}
         </div>
-        <div>
+        <div class="button-row compact-button-row">
+          {% if selected_message.thread %}
+            <a
+              href="https://mail.google.com/mail/u/0/#all/{{ selected_message.thread.gmail_thread_id }}"
+              class="link-button"
+              target="_blank"
+              rel="noreferrer"
+            >Open In Gmail</a>
+          {% endif %}
           {% if selected_message.attachments %}
             <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
           {% endif %}

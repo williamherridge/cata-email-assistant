@@ -1,33 +1,27 @@
 {% extends "base.html" %}
 
-{% block title %}Queue | CATA Email Assistant{% endblock %}
+{% block title %}Queue | League Assistant{% endblock %}
+
+{% block hero_tools %}
+  <div class="toolbar-actions">
+    {% if poll_runs %}
+      {% set recent_poll_run = poll_runs[0] %}
+      <div class="poll-summary">
+        <span class="pill">{{ recent_poll_run.status }}</span>
+        <span class="muted"><a href="/poll-runs">View All</a></span>
+        <span class="muted">Latest poll: {{ recent_poll_run.started_at|portal_datetime }}</span>
+      </div>
+    {% endif %}
+    {% if mailboxes %}
+      {% set mailbox = mailboxes[0] %}
+      <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" data-poll-form>
+        <button type="submit">Poll Now</button>
+      </form>
+    {% endif %}
+  </div>
+{% endblock %}
 
 {% block content %}
-  <section class="panel queue-header-panel" style="margin-bottom: 0.65rem;">
-    <div class="queue-toolbar">
-      <div>
-        <h2 style="margin-bottom: 0;">Queue</h2>
-      </div>
-      <div class="toolbar-actions">
-        {% if poll_runs %}
-          {% set recent_poll_run = poll_runs[0] %}
-          <div class="poll-summary">
-            <span class="pill">{{ recent_poll_run.status }}</span>
-            <span class="muted"><a href="/poll-runs">View All</a></span>
-            <span class="muted">Latest poll: {{ recent_poll_run.started_at|portal_datetime }}</span>
-            <span class="muted">Discovered {{ recent_poll_run.messages_discovered }}</span>
-            <span class="muted">Enqueued {{ recent_poll_run.messages_enqueued }}</span>
-          </div>
-        {% endif %}
-        {% if mailboxes %}
-          {% set mailbox = mailboxes[0] %}
-          <form action="/mailboxes/{{ mailbox.id }}/poll" method="post" data-poll-form>
-            <button type="submit">Poll Now</button>
-          </form>
-        {% endif %}
-      </div>
-    </div>
-  </section>
 
   <section class="workbench-layout">
     <div class="panel queue-panel">
@@ -138,8 +132,6 @@
               <div class="queue-meta">
                 {% if message.reply_needed %}
                   <span class="meta-icon meta-reply" title="Reply needed">↩</span>
-                {% elif message.informational_only %}
-                  <span class="meta-icon meta-info" title="Informational only">i</span>
                 {% endif %}
 
                 {% if message.priority == "critical" %}
