@@ -95,7 +95,7 @@ def classify_makeup_match_lineup(message: Message, body_text: str) -> Classifica
         reply_needed=False,
         informational_only=True,
         priority="low",
-        auto_ignore=False,
+        auto_ignore=True,
         reason_summary=(
             "Matched the structured make-up match line-up form based on sender, subject prefix, "
             "and required body markers."

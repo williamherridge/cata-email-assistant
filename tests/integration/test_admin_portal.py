@@ -406,6 +406,12 @@ def test_queue_and_message_detail_render(tmp_path):
         assert "Test reply" in history_response.text
         assert "Registration question" in history_response.text
 
+        history_selection_response = client.get(f"/history/selection?tab=responded&selected_message_id={message.id}")
+        assert history_selection_response.status_code == 200
+        assert 'data-history-workbench' in history_selection_response.text
+        assert "Sent Reply" in history_selection_response.text
+        assert "Test reply" in history_selection_response.text
+
         reopen_from_history_response = client.post(
             f"/messages/{message.id}/reopen",
             data={"return_to": f"/queue?selected_message_id={message.id}"},

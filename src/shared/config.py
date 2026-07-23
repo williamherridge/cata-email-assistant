@@ -53,6 +53,10 @@ class Settings(BaseSettings):
         default=REPO_ROOT / "config" / "token.json",
         alias="GOOGLE_OAUTH_TOKEN_PATH",
     )
+    google_sheets_oauth_token_path: Path = Field(
+        default=REPO_ROOT / "config" / "sheets_token.json",
+        alias="GOOGLE_SHEETS_OAUTH_TOKEN_PATH",
+    )
     gmail_initial_sync_days: int = Field(default=30, alias="GMAIL_INITIAL_SYNC_DAYS")
     gmail_initial_sync_max_results: int = Field(default=50, alias="GMAIL_INITIAL_SYNC_MAX_RESULTS")
     gmail_test_send_override: str | None = Field(

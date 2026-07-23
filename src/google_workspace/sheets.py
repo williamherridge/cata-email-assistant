@@ -50,6 +50,14 @@ TEAM_REGISTRATION_RECIPIENT_HEADERS = [
     "IngestedAt",
 ]
 
+TEAM_REGISTRATION_FORMULA_HEADERS = [
+    "Minimum Roster",
+    "Max Roster",
+    "Format",
+    "RosterDueDate",
+    "SeasonStartDate",
+]
+
 
 @dataclass
 class DuplicateRecipientRow:
@@ -75,7 +83,7 @@ class TeamRegistrationRecipientListClient:
                 "v4",
                 scopes=TEAM_REGISTRATION_SHEET_SCOPES,
                 credentials_path=self.settings.gmail_oauth_credentials_path,
-                token_path=self.settings.gmail_oauth_token_path,
+                token_path=self.settings.google_sheets_oauth_token_path,
                 allow_interactive=False,
             )
         return self._service
@@ -100,7 +108,9 @@ class TeamRegistrationRecipientListClient:
             or response.get("tableRange")
             or ""
         )
-        return self._parse_row_number(updated_range)
+        appended_row_number = self._parse_row_number(updated_range)
+        self._copy_formula_columns_to_row(appended_row_number)
+        return appended_row_number
 
     def find_duplicate_row(self, *, team_name: str, captain_name: str, league_value: str) -> DuplicateRecipientRow | None:
         headers, rows = self._read_rows()
@@ -209,6 +219,75 @@ class TeamRegistrationRecipientListClient:
                 self._sheet_id = int(properties["sheetId"])
                 return self._sheet_id
         raise ValueError(f"Worksheet '{self.sheet_name}' was not found in the configured spreadsheet.")
+
+    def _copy_formula_columns_to_row(self, destination_row: int) -> None:
+        if destination_row <= 2:
+            return
+
+        source_row = destination_row - 1
+        requests = self._build_formula_copy_requests(
+            headers=self._read_headers(),
+            sheet_id=self._get_sheet_id(),
+            source_row=source_row,
+            destination_row=destination_row,
+        )
+        if not requests:
+            return
+        self.service.spreadsheets().batchUpdate(
+            spreadsheetId=self.spreadsheet_id,
+            body={"requests": requests},
+        ).execute()
+
+    @classmethod
+    def _build_formula_copy_requests(
+        cls,
+        *,
+        headers: list[str],
+        sheet_id: int,
+        source_row: int,
+        destination_row: int,
+    ) -> list[dict]:
+        indices = [headers.index(header) for header in TEAM_REGISTRATION_FORMULA_HEADERS if header in headers]
+        if not indices:
+            return []
+
+        indices.sort()
+        ranges: list[tuple[int, int]] = []
+        start = indices[0]
+        end = indices[0]
+        for index in indices[1:]:
+            if index == end + 1:
+                end = index
+                continue
+            ranges.append((start, end))
+            start = end = index
+        ranges.append((start, end))
+
+        requests: list[dict] = []
+        for start_index, end_index in ranges:
+            requests.append(
+                {
+                    "copyPaste": {
+                        "source": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": source_row - 1,
+                            "endRowIndex": source_row,
+                            "startColumnIndex": start_index,
+                            "endColumnIndex": end_index + 1,
+                        },
+                        "destination": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": destination_row - 1,
+                            "endRowIndex": destination_row,
+                            "startColumnIndex": start_index,
+                            "endColumnIndex": end_index + 1,
+                        },
+                        "pasteType": "PASTE_FORMULA",
+                        "pasteOrientation": "NORMAL",
+                    }
+                }
+            )
+        return requests
 
     @staticmethod
     def _duplicate_key(team_name: str, captain_name: str, league_value: str) -> tuple[str, str, str]:

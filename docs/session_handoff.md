@@ -76,6 +76,9 @@ Last updated: July 22, 2026
   - `reply_needed = false`
   - `priority = low`
   - `default_draft_behavior = auto_ignore_candidate`
+- Runtime behavior:
+  - matching messages are automatically moved to `ignored`
+  - a `message_ignored` audit event is written with workflow attribution
 
 `Team registration submission`
 

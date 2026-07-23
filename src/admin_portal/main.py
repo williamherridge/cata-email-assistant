@@ -312,6 +312,16 @@ def build_history_context(request: Request, **overrides):
     return context
 
 
+def build_history_selection_context(selected_message):
+    return {
+        "sent_reply_records": read_sent_reply_records(selected_message) if selected_message else [],
+        "selected_body_text": read_body_artifact(selected_message) if selected_message else "",
+        "selected_body_html": read_body_html_artifact(selected_message) if selected_message else "",
+        "selected_ignore_source": get_ignore_source(selected_message) if selected_message else "",
+        **build_original_recipient_context(selected_message),
+    }
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled application error for %s %s", request.method, request.url.path, exc_info=exc)
@@ -501,12 +511,8 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
                 ignored_scope=ignored_scope,
                 history_filter_query=filter_query,
                 return_to_history=f"/history?{filter_query}" if filter_query else "/history",
-                sent_reply_records=read_sent_reply_records(selected_message) if selected_message else [],
-                selected_body_text=read_body_artifact(selected_message) if selected_message else "",
-                selected_body_html=read_body_html_artifact(selected_message) if selected_message else "",
-                selected_ignore_source=get_ignore_source(selected_message) if selected_message else "",
                 selected_history_status=selected_message.status if selected_message else "",
-                **build_original_recipient_context(selected_message),
+                **build_history_selection_context(selected_message),
             ),
         )
     except Exception:
@@ -524,6 +530,40 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
                 page_error=resolve_page_error("history_load_failed"),
                 return_to_history=f"/history?{filter_query}" if filter_query else "/history",
             ),
+        )
+
+
+@app.get("/history/selection", response_class=HTMLResponse)
+def history_selection_partial(request: Request, db: Session = Depends(get_db_session)):
+    selected_message_id = request.query_params.get("selected_message_id")
+    selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
+    try:
+        ensure_default_mailbox(db, settings)
+        sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
+        selected_message = None
+        if selected_id is not None:
+            selected_message = get_message_detail_for_view(db, selected_id, view="history")
+        return templates.TemplateResponse(
+            request,
+            name="partials/history_workbench.html",
+            context={
+                "selected_message": selected_message,
+                "selected_message_id": selected_id,
+                **build_history_selection_context(selected_message),
+            },
+        )
+    except Exception:
+        rollback_session(db)
+        logger.exception("History selection partial failed.")
+        return templates.TemplateResponse(
+            request,
+            name="partials/history_workbench.html",
+            context={
+                "selected_message": None,
+                "selected_message_id": selected_id,
+                **build_history_selection_context(None),
+            },
+            status_code=200,
         )
 
 

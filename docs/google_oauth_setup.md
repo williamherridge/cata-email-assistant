@@ -43,7 +43,7 @@ Expected path from the repository root:
 
 - `config/credentials.json`
 
-## 6. Run First Auth Flow
+## 6. Run First Gmail Auth Flow
 
 From repo root:
 
@@ -60,11 +60,30 @@ On first run:
 
 Future runs reuse `config/token.json` automatically.
 
+## 7. Run First Google Sheets Auth Flow
+
+From repo root:
+
+```bash
+source .venv/bin/activate
+python scripts/authorize_google_sheets.py
+```
+
+On first run:
+
+1. Browser opens for Google sign-in/consent.
+2. After success, a dedicated Sheets token is saved to:
+   - `config/sheets_token.json`
+
+This token is intentionally separate from the Gmail token so re-authorizing Gmail does not remove Sheets access.
+
 ## Troubleshooting
 
 - `FileNotFoundError` for credentials:
   - Confirm `config/credentials.json` exists and is valid JSON.
 - `access_denied` or app not verified:
   - Ensure your Google account is listed as a test user.
-- Scope/permission issues:
-  - Delete `config/token.json` and re-run to force new consent.
+- Gmail scope/permission issues:
+  - Delete `config/token.json` and re-run the Gmail auth flow to force new consent.
+- Sheets scope/permission issues:
+  - Delete `config/sheets_token.json` and re-run `python scripts/authorize_google_sheets.py`.

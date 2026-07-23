@@ -413,6 +413,7 @@ def make_settings(tmp_path: Path):
             "default_gmail_display_name": "Pilot Inbox",
             "gmail_oauth_credentials_path": Path("config/credentials.json"),
             "gmail_oauth_token_path": Path("config/token.json"),
+            "google_sheets_oauth_token_path": Path("config/sheets_token.json"),
             "gmail_initial_sync_days": 30,
             "gmail_initial_sync_max_results": 50,
             "gmail_test_send_override": "william@theherridges.com",
@@ -503,11 +504,16 @@ def test_poll_mailbox_auto_classifies_makeup_lineup(monkeypatch, tmp_path):
 
     message = session.scalar(select(Message).where(Message.gmail_message_id == "msg-2"))
     assert message is not None
+    assert message.status == "ignored"
     assert message.assigned_category is not None
     assert message.assigned_category.name == "Make-up match line up"
     assert message.reply_needed is False
     assert message.informational_only is True
     assert message.priority == "low"
+    assert message.ignored_at is not None
+
+    event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
+    assert "message_ignored" in event_types
 
     category = session.scalar(select(Category).where(Category.name == "Make-up match line up"))
     assert category is not None

@@ -1,0 +1,134 @@
+<div id="history-workbench-pane" class="grid workbench-stack" data-history-workbench>
+  {% if selected_message %}
+    <div class="panel">
+      <div class="section-header">
+        <div>
+          <h3 style="margin-bottom: 0.3rem;">{{ selected_message.subject or "(No subject)" }}</h3>
+          <div class="muted">
+            From:
+            {{ selected_message.from_display or selected_message.from_address or "Unknown" }}
+            {% if selected_message.status == "responded" and selected_message.responded_at %}
+              | Sent {{ selected_message.responded_at|portal_datetime }}
+            {% elif selected_message.status == "ignored" and selected_message.ignored_at %}
+              | Ignored {{ selected_message.ignored_at|portal_datetime }}
+            {% elif selected_message.status == "processed" %}
+              | Processed {{ selected_message.updated_at|portal_datetime if selected_message.updated_at else "Unknown" }}
+            {% endif %}
+          </div>
+        </div>
+        <div class="button-row">
+          <form action="/messages/{{ selected_message.id }}/reopen" method="post">
+            <input type="hidden" name="return_to" value="/queue?selected_message_id={{ selected_message.id }}" />
+            <button type="submit">Return to New</button>
+          </form>
+          {% if selected_message.thread %}
+            <a
+              href="https://mail.google.com/mail/u/0/#all/{{ selected_message.thread.gmail_thread_id }}"
+              class="link-button"
+              target="_blank"
+              rel="noreferrer"
+            >Open In Gmail</a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="kv">
+        <div class="muted">Status</div>
+        <div>{{ selected_message.status }}</div>
+        <div class="muted">Priority</div>
+        <div>{{ selected_message.priority }}</div>
+        <div class="muted">Category</div>
+        <div>{{ selected_message.assigned_category.name if selected_message.assigned_category else "Not set" }}</div>
+        {% if selected_message.status == "ignored" %}
+          <div class="muted">Ignore Source</div>
+          <div>{{ "Manual" if selected_ignore_source == "manual" else "Automatic" }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if selected_message.status == "responded" %}
+      <div class="panel">
+        <div class="section-header">
+          <h3>Sent Reply</h3>
+          {% if sent_reply_records %}
+            <span class="muted">Most recent reply shown</span>
+          {% endif %}
+        </div>
+        {% if sent_reply_records %}
+          {% set sent_reply = sent_reply_records[0] %}
+          <div class="muted" style="margin-bottom: 0.75rem;">
+            To:
+            {{ sent_reply.metadata.effective_to|join(", ") if sent_reply.metadata.effective_to else "Unknown" }}
+            {% if sent_reply.metadata.effective_cc %}
+              | Cc: {{ sent_reply.metadata.effective_cc|join(", ") }}
+            {% endif %}
+            {% if sent_reply.metadata.subject %}
+              | Subject: {{ sent_reply.metadata.subject }}
+            {% endif %}
+          </div>
+          <div class="message-body-preview html-body-preview">
+            <div class="rendered-email-body">{{ sent_reply.html|safe }}</div>
+          </div>
+        {% else %}
+          <p class="muted">No stored sent-reply body is available for this message yet.</p>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="panel">
+      <div class="section-header">
+        <div>
+          <h3>Original Email</h3>
+          {% if original_other_recipients %}
+            <div class="muted compact-meta-line">
+              <span>{{ original_other_recipients_label }}: {{ original_other_recipients|join(", ") }}</span>
+            </div>
+          {% endif %}
+        </div>
+        <div>
+          {% if selected_message.attachments %}
+            <span class="muted">{{ selected_message.attachments|length }} attachment(s)</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="message-body-preview {% if selected_body_html %}html-body-preview{% endif %}">
+        {% if selected_body_html %}
+          <div class="rendered-email-body">{{ selected_body_html|safe }}</div>
+        {% else %}
+          {{ selected_body_text or selected_message.snippet or "No body content captured." }}
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Audit Trail</h3>
+      {% if selected_message.audit_events %}
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Event</th>
+              <th>Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in selected_message.audit_events %}
+              <tr>
+                <td>{{ event.created_at|portal_datetime }}</td>
+                <td>{{ event.event_type }}</td>
+                <td>{{ event.summary or "" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No audit events recorded yet.</p>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="panel empty-workbench">
+      <h3>No Message Selected</h3>
+      <p class="muted">Select a history item to review the original message, sent reply, and audit context.</p>
+    </div>
+  {% endif %}
+</div>
