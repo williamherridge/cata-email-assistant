@@ -23,17 +23,24 @@
         </div>
       </div>
 
-      <form id="{{ selected_message.id }}-review-form" action="/messages/{{ selected_message.id }}/review" method="post" class="stack" data-draft-form>
+      <form
+        id="{{ selected_message.id }}-review-form"
+        action="/messages/{{ selected_message.id }}/review"
+        method="post"
+        class="stack"
+        data-draft-form
+        data-signature-placeholder-label="Email signature populated here"
+      >
         <input type="hidden" name="return_to" value="{{ return_to_queue }}" />
         <input type="hidden" name="informational_only" value="{% if selected_message.informational_only %}1{% else %}0{% endif %}" />
         <div class="inline-label-grid">
           <div class="inline-field">
             <div class="inline-field-label">To</div>
-            <input type="text" name="draft_to" value="{{ reply_to_addresses }}" />
+            <input type="text" name="draft_to" value="{{ reply_to_addresses }}" autocomplete="off" data-contact-autocomplete="to" />
           </div>
           <div class="inline-field">
             <div class="inline-field-label">Cc</div>
-            <input type="text" name="draft_cc" value="{{ reply_cc_addresses }}" />
+            <input type="text" name="draft_cc" value="{{ reply_cc_addresses }}" autocomplete="off" data-contact-autocomplete="cc" />
           </div>
         </div>
 
@@ -111,12 +118,15 @@
           class="button-secondary action-send"
           formaction="/messages/{{ selected_message.id }}/send"
           data-send-button
+          {% if draft_is_blank_reply %}disabled{% endif %}
         >Send</button>
         <button
           type="submit"
           form="{{ selected_message.id }}-review-form"
           class="button-secondary action-save-draft"
           formaction="/messages/{{ selected_message.id }}/draft"
+          data-save-draft-button
+          {% if draft_is_blank_reply %}disabled{% endif %}
         >Save Draft</button>
         <button
           type="submit"

@@ -1,6 +1,6 @@
 # Session Handoff
 
-Last updated: July 23, 2026
+Last updated: July 24, 2026
 
 ## Repo
 
@@ -51,6 +51,8 @@ Last updated: July 23, 2026
 - Automatic scheduled polling support is now implemented for the lean pilot runtime.
 - Google Sheets integration scaffolding now exists for deterministic spreadsheet workflows tied to Gmail ingest.
 - Google Sheets auth is now separated from Gmail auth so the Sheets token can be re-authorized independently.
+- Known-contact autocomplete now supports a seeded contact list and live suggestion ranking by recent use.
+- A deterministic-rules reference now exists in requirements docs for easier maintenance and future user-manual reuse.
 
 ## Taxonomy And Classification Progress
 
@@ -58,12 +60,29 @@ Last updated: July 23, 2026
 - `Informational only` is no longer an approved category.
 - `Ineligible player for sectionals notification` normalizes to `Ineligible player`.
 - Deterministic category handling now exists for:
+  - `Make-up date form`
   - `Make-up match line up`
   - `Ineligible League Player Form`
   - `Team registration submission`
   - `Facility Request > UT-W`
 
 ### Current deterministic behavior
+
+`Make-up date form`
+
+- Matches only when the individual message itself looks like the structured form.
+- Uses:
+  - sender `web@site.tennisaustin.org`
+  - subject starting with `New submission from Make Up Match DATE Notification`
+  - body markers including `Match ID` and `Date for Doubles 1`
+- Defaults:
+  - `informational_only = true`
+  - `reply_needed = false`
+  - `priority = low`
+  - `default_draft_behavior = auto_ignore_candidate`
+- Runtime behavior:
+  - matching messages are automatically moved to `ignored`
+  - a `message_ignored` audit event is written with workflow attribution
 
 `Make-up match line up`
 
@@ -141,6 +160,8 @@ Last updated: July 23, 2026
   - `Facility`
   - concatenated `League`
   - `Subject` equal to the concatenated league value
+- Captain email now writes to `Email Address` instead of the old `Email Provided` column.
+- The old `Email Provided` column/header was renamed in the app to `CC Email` to match the spreadsheet and Apps Script.
 - Registration Type is now normalized to the short label only:
   - `Closed Team`
   - `Closed but Seeking`
@@ -162,6 +183,26 @@ Last updated: July 23, 2026
   - does not overwrite an existing row
   - sends an admin alert instead
 - Facility permission rule now treats `UT Whitaker` as auto-allowed even if the permission flag is not set.
+- RecipientList insertion behavior is now more workflow-aware:
+  - open rows with blank `EmailSent` stay alphabetized by `League`
+  - equal leagues stay grouped together while a league still has at least one blank `Team Code`
+  - if all open rows for that same league already have `Team Code` populated, a late-arriving row appends at the bottom instead of being buried in the older processed block
+- Formula columns are still copied into inserted/appended rows for:
+  - `Minimum Roster`
+  - `Max Roster`
+  - `Format`
+  - `RosterDueDate`
+  - `SeasonStartDate`
+- `CC Email` is now populated deterministically for selected facilities:
+  - `Austin Tennis Center` -> `lincolnward@playatctennis.com`
+  - `Lakeway World of Tennis` -> `Ivi.Kerrigan@invitedclubs.com`
+  - `The Hills Sports Complex - Lakeway` -> `Ivi.Kerrigan@invitedclubs.com`
+- Team-registration Sheets failures are now more resilient:
+  - duplicate-check and row-write operations retry once on transient `HttpError` / `OSError`
+  - analysis failures now capture exception type and message in audit/work-item data instead of a blank `{}` payload
+- Live recovery verified:
+  - internal message `391` originally failed after deterministic classification during Sheets-side post-processing
+  - after the retry/logging hardening pass, message `391` was successfully reprocessed, inserted into `RecipientList`, and marked `processed`
 - Verified live example:
   - internal message `348`
   - row inserted into `RecipientList`
@@ -204,6 +245,31 @@ Last updated: July 23, 2026
   - greet the captain by first name
   - preserve the agreed signature formatting and Tennis Austin logo
 - `Make-up match line up` messages are now auto-ignored deterministically instead of lingering in queue.
+- `Make-up date form` messages are now auto-ignored deterministically instead of lingering in queue.
+- Queue and History now trigger a lightweight portal-side mailbox refresh when the mailbox poll is stale, reducing the window where Casey has already replied in Gmail but the queue still shows the thread as `new`.
+- Local daytime poll cadence in `config/.env` was tightened from 15 minutes to 5 minutes for the active pilot environment.
+- Reply send/save protections were tightened:
+  - `Send` and `Save Draft` are disabled when the reply still matches the untouched default blank reply (salutation plus signature placeholder only)
+  - backend guards also reject save/send attempts for that blank-default case if the UI is bypassed
+- Known-contact autocomplete seed data was loaded into the live `known_contacts` table:
+  - total contacts now `93`
+  - seeded contacts use `use_count = 0` and `last_used_at = null` unless they already had live usage history
+
+## Deterministic Rules Documentation
+
+- A dedicated deterministic-rule reference now exists at:
+  - [docs/requirements/deterministic_rules.md](/Users/williamherridge/Documents/repos/cata-email-assistant/docs/requirements/deterministic_rules.md)
+- It is also linked from:
+  - [README.md](/Users/williamherridge/Documents/repos/cata-email-assistant/README.md)
+  - [docs/product_requirements.md](/Users/williamherridge/Documents/repos/cata-email-assistant/docs/product_requirements.md)
+  - [docs/requirements/README.md](/Users/williamherridge/Documents/repos/cata-email-assistant/docs/requirements/README.md)
+
+## Latest Database / Autocomplete Notes
+
+- Live SQLite database at `data/processed/app/cata_email_assistant.db` is about `4.0 MB`.
+- `message_headers` is relatively large by row count because the system currently stores one row per raw email header; current volume is driven mostly by transport/authentication/provider headers rather than business data.
+- The app currently uses parsed header values during ingest, but relies only lightly on the persisted `message_headers` rows after ingest.
+- This makes header-retention trimming a viable future optimization area if DB size or clarity becomes important.
 
 ## Latest Queue / Workbench Usability Pass
 
@@ -322,9 +388,10 @@ The latest pass addressed slow queue navigation observed when testing from a sec
 ## Current Next Steps
 
 - Commit and push the current portal, classification, Gmail, and Google Sheets workflow changes.
-- After compaction, likely next implementation focus:
-  - continue the spreadsheet automation path beyond row insertion
-  - define and implement the downstream behavior for additional structured message types as requested
+- Next planned implementation focus after this commit:
+  - design the LLM-assisted non-deterministic categorization and template-based drafting framework
+  - likely start with a narrow pilot path such as `Refund Request`
+  - keep deterministic handling first in the workflow and minimize LLM cost through small-category routing, hybrid templates, and cheap classification models
 
 ### Migration added
 
@@ -382,6 +449,12 @@ Key rule:
 - `39cc7c1` `Polish queue review workflow`
 - `3c3dde4` `Refine queue workbench usability`
 - `3a80fee` `Improve queue navigation performance`
+- Current uncommitted work after `7916df3` includes:
+  - Google Sheets row-placement and CC-email refinements
+  - deterministic `Make-up date form` support
+  - portal stale-mailbox refresh
+  - blank-default draft send/save guard
+  - known-contact seed data and deterministic-rule documentation
 
 ## Files Updated In The Latest Pass
 
@@ -419,6 +492,16 @@ Files updated in the latest pass:
   - result: `18 passed`
 - `./.venv/bin/python3 -m compileall src`
   - completed successfully after alias handling, recipient-summary cleanup, and facility-request auto-ignore updates
+- `./.venv/bin/python3 -m pytest tests/unit/test_google_sheets.py -q`
+  - result: `8 passed`
+- `./.venv/bin/python3 -m pytest tests/unit/test_polling.py -q`
+  - result: up to `36 passed` during the latest pass as tests were added
+- `./.venv/bin/python3 -m pytest tests/unit/test_taxonomy.py -q`
+  - result: `2 passed`
+- `./.venv/bin/python3 -m pytest tests/integration/test_admin_portal.py -q`
+  - result: `1 passed`
+- `python3 -m compileall src`
+  - completed successfully after the latest draft-guard and deterministic-rule changes
 
 ## Known Open Areas
 
@@ -429,7 +512,7 @@ Files updated in the latest pass:
 - History screen does not yet use the same partial-pane update behavior as the queue screen.
 - `DEFAULT_GMAIL_ADDRESS` should still be set in local config even though the runtime now handles the unset case more efficiently.
 - If a local `.env` is introduced later, add Casey alias support there with `DEFAULT_GMAIL_ALIASES`.
-- Google Sheets automation requirements are intentionally deferred until after automatic polling is enabled.
+- LLM-assisted non-deterministic categorization and category-template drafting have not been implemented yet; next work is expected to produce a design doc before code.
 
 ## Automatic Polling Pass
 

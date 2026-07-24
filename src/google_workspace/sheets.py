@@ -18,7 +18,7 @@ BASE_RECIPIENT_HEADERS = [
     "Team Name",
     "Captain(s)",
     "Email Address",
-    "Email Provided",
+    "CC Email",
     "League",
     "Minimum Roster",
     "Max Roster",
@@ -34,7 +34,7 @@ TEAM_REGISTRATION_RECIPIENT_HEADERS = [
     "Team Name",
     "Captain(s)",
     "Email Address",
-    "Email Provided",
+    "CC Email",
     "Captain USTA Number",
     "League",
     "Registration Type",
@@ -90,7 +90,49 @@ class TeamRegistrationRecipientListClient:
 
     def append_team_registration_row(self, row: dict[str, str]) -> int:
         self.ensure_recipient_sheet_schema()
+        headers, rows = self._read_rows()
         values = [[row.get(header, "") for header in TEAM_REGISTRATION_RECIPIENT_HEADERS]]
+        insert_row_number = self._find_sorted_open_league_insert_row(
+            headers=headers,
+            rows=rows,
+            league_value=row.get("League", ""),
+        )
+        if insert_row_number is not None:
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={
+                    "requests": [
+                        {
+                            "insertDimension": {
+                                "range": {
+                                    "sheetId": self._get_sheet_id(),
+                                    "dimension": "ROWS",
+                                    "startIndex": insert_row_number - 1,
+                                    "endIndex": insert_row_number,
+                                },
+                                "inheritFromBefore": insert_row_number > 2,
+                            }
+                        }
+                    ]
+                },
+            ).execute()
+            (
+                self.service.spreadsheets()
+                .values()
+                .update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=(
+                        f"{self.sheet_name}!A{insert_row_number}:"
+                        f"{self._column_letter(len(TEAM_REGISTRATION_RECIPIENT_HEADERS))}{insert_row_number}"
+                    ),
+                    valueInputOption="USER_ENTERED",
+                    body={"values": values},
+                )
+                .execute()
+            )
+            self._copy_formula_columns_to_row(insert_row_number)
+            return insert_row_number
+
         response = (
             self.service.spreadsheets()
             .values()
@@ -237,6 +279,51 @@ class TeamRegistrationRecipientListClient:
             spreadsheetId=self.spreadsheet_id,
             body={"requests": requests},
         ).execute()
+
+    @classmethod
+    def _find_sorted_open_league_insert_row(
+        cls,
+        *,
+        headers: list[str],
+        rows: list[list[str]],
+        league_value: str,
+    ) -> int | None:
+        if "League" not in headers or "EmailSent" not in headers or "Team Code" not in headers:
+            return None
+
+        normalized_league = cls._normalize_cell(league_value)
+        if not normalized_league:
+            return None
+
+        league_index = headers.index("League")
+        email_sent_index = headers.index("EmailSent")
+        team_code_index = headers.index("Team Code")
+        last_open_row_number: int | None = None
+        matching_league_has_unassigned_team_code = False
+        matching_league_exists = False
+
+        for row_number, row in enumerate(rows, start=2):
+            existing_league = row[league_index] if league_index < len(row) else ""
+            email_sent_value = row[email_sent_index] if email_sent_index < len(row) else ""
+            if cls._normalize_cell(email_sent_value):
+                continue
+            existing_league_key = cls._normalize_cell(existing_league)
+            if not existing_league_key:
+                continue
+            existing_team_code = row[team_code_index] if team_code_index < len(row) else ""
+            if existing_league_key == normalized_league:
+                matching_league_exists = True
+                if not cls._normalize_cell(existing_team_code):
+                    matching_league_has_unassigned_team_code = True
+            if existing_league_key > normalized_league:
+                return row_number if not matching_league_exists or matching_league_has_unassigned_team_code else None
+            last_open_row_number = row_number
+
+        if matching_league_exists and not matching_league_has_unassigned_team_code:
+            return None
+        if last_open_row_number is None:
+            return None
+        return last_open_row_number + 1
 
     @classmethod
     def _build_formula_copy_requests(

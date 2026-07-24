@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.google_workspace.sheets import DuplicateRecipientRow
 from src.shared.database import Base
-from src.shared.models import AuditEvent, Category, Mailbox, Message, MessageArtifact, MessageThread, PollRun, WorkItem
+from src.shared.models import AuditEvent, Category, KnownContact, Mailbox, Message, MessageArtifact, MessageThread, PollRun, WorkItem
 from src.workflow import polling
 
 
@@ -151,6 +151,52 @@ class FakeReplyToMakeupLineupGmailClient:
                     {
                         "mimeType": "text/plain",
                         "body": {"data": "VGhlIG90aGVyIGNhcHRhaW4gaXMgbm90IGNvb3BlcmF0aW5nLiBDYW4geW91IGhlbHA/"},
+                    }
+                ],
+            },
+        }
+
+
+class FakeMakeupDateFormGmailClient:
+    def __init__(self, _settings):
+        pass
+
+    def get_profile(self):
+        return {"emailAddress": "pilot@cata.test", "historyId": "777"}
+
+    def discover_message_ids(self, _since_history_id):
+        return type("Discovery", (), {"history_id": "777", "message_ids": ["msg-5"]})()
+
+    def get_message(self, _message_id):
+        body = (
+            "Match ID 1012083835\n"
+            "Your Name Jennie Purushothaman\n"
+            "Will all Make Up lines be played at the same time? No\n"
+            "Date for Doubles 1 8/04/2026\n"
+            "Date for Doubles 2 8/22/2026\n"
+            "Date for Doubles 3 08/02/2026\n"
+        )
+        return {
+            "id": "msg-5",
+            "threadId": "thread-5",
+            "historyId": "777",
+            "internalDate": "1721404800000",
+            "snippet": "New submission from Make Up Match DATE Notification Match ID 1012083835",
+            "payload": {
+                "mimeType": "multipart/alternative",
+                "headers": [
+                    {"name": "Subject", "value": "New submission from Make Up Match DATE Notification"},
+                    {"name": "From", "value": "Tennis Austin <web@site.tennisaustin.org>"},
+                    {"name": "To", "value": "pilot@cata.test"},
+                    {"name": "Date", "value": "Fri, 24 Jul 2026 9:00:00 -0500"},
+                    {"name": "Message-Id", "value": "<msg-5@example.com>"},
+                ],
+                "parts": [
+                    {
+                        "mimeType": "text/plain",
+                        "body": {
+                            "data": "TWF0Y2ggSUQgMTAxMjA4MzgzNQpZb3VyIE5hbWUgSmVubmllIFB1cnVzaG90aGFtYW4KV2lsbCBhbGwgTWFrZSBVcCBsaW5lcyBiZSBwbGF5ZWQgYXQgdGhlIHNhbWUgdGltZT8gTm8KRGF0ZSBmb3IgRG91YmxlcyAxIDgvMDQvMjAyNgpEYXRlIGZvciBEb3VibGVzIDIgOC8yMi8yMDI2CkRhdGUgZm9yIERvdWJsZXMgMyAwOC8wMi8yMDI2Cg=="
+                        },
                     }
                 ],
             },
@@ -393,6 +439,7 @@ def make_settings(tmp_path: Path):
             {
                 "updated_at": "2026-07-20T00:00:00",
                 "categories": [
+                    {"name": "Make-up date form"},
                     {"name": "Make-up match line up"},
                     {"name": "Ineligible League Player Form"},
                     {"name": "Team registration submission"},
@@ -516,6 +563,38 @@ def test_poll_mailbox_auto_classifies_makeup_lineup(monkeypatch, tmp_path):
     assert "message_ignored" in event_types
 
     category = session.scalar(select(Category).where(Category.name == "Make-up match line up"))
+    assert category is not None
+    assert category.default_draft_behavior == "auto_ignore_candidate"
+    assert category.default_reply_needed is False
+    assert category.default_informational_only is True
+    assert category.priority_hint == "low"
+
+
+def test_poll_mailbox_auto_classifies_makeup_date_form(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.commit()
+
+    monkeypatch.setattr(polling, "GmailClient", FakeMakeupDateFormGmailClient)
+
+    polling.poll_mailbox(session, settings, mailbox.id)
+
+    message = session.scalar(select(Message).where(Message.gmail_message_id == "msg-5"))
+    assert message is not None
+    assert message.status == "ignored"
+    assert message.assigned_category is not None
+    assert message.assigned_category.name == "Make-up date form"
+    assert message.reply_needed is False
+    assert message.informational_only is True
+    assert message.priority == "low"
+    assert message.ignored_at is not None
+
+    event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
+    assert "message_ignored" in event_types
+
+    category = session.scalar(select(Category).where(Category.name == "Make-up date form"))
     assert category is not None
     assert category.default_draft_behavior == "auto_ignore_candidate"
     assert category.default_reply_needed is False
@@ -697,7 +776,8 @@ def test_team_registration_workflow_appends_row_and_marks_processed(monkeypatch,
     appended = FakeTeamRegistrationSheetsClient.appended_rows[0]
     assert appended["Team Name"] == "TBD"
     assert appended["Captain(s)"] == "Jamie Lay"
-    assert appended["Email Provided"] == "jameswarnerlay@gmail.com"
+    assert appended["Email Address"] == "jameswarnerlay@gmail.com"
+    assert appended["CC Email"] == ""
     assert appended["Captain USTA Number"] == "11413470"
     assert appended["League"] == "Mens Weekend - 3.5 - FALL 18+ League"
     assert appended["Subject"] == appended["League"]
@@ -798,10 +878,53 @@ def test_team_registration_workflow_saves_blocked_facility_draft(monkeypatch, tm
     assert saved["draft_to"] == "rory.reeve@gmail.com"
     assert saved["draft_cc"] == "pilot@cata.test"
     assert "Hi Rory," in str(saved.get("draft_html", ""))
-    assert "Thank you,</p><p style=\"margin: 0; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;\"><br></p>" in str(saved.get("draft_html", ""))
+    assert "Email signature populated here" in str(saved.get("draft_html", ""))
     assert "cannot be registered until you have permission for the facility" in str(saved.get("draft_html", ""))
-    assert "Casey Herridge" in str(saved.get("draft_html", ""))
-    assert "data:image/webp;base64" in str(saved.get("draft_html", ""))
+    assert "Casey Herridge" not in str(saved.get("draft_html", ""))
+    assert "data:image/webp;base64" not in str(saved.get("draft_html", ""))
+
+
+def test_resolve_team_registration_cc_email_returns_facility_specific_values():
+    assert polling.resolve_team_registration_cc_email("Austin Tennis Center") == "lincolnward@playatctennis.com"
+    assert polling.resolve_team_registration_cc_email("Lakeway World of Tennis") == "Ivi.Kerrigan@invitedclubs.com"
+    assert polling.resolve_team_registration_cc_email("The Hills Sports Complex - Lakeway") == "Ivi.Kerrigan@invitedclubs.com"
+    assert polling.resolve_team_registration_cc_email("Anderson High School") == ""
+
+
+def test_build_team_registration_sheet_row_sets_cc_email_for_austin_tennis_center(tmp_path):
+    settings = make_settings(tmp_path)
+    message = Message(id=999)
+    registration = polling.TeamRegistrationRecord(
+        captain_name="Casey Herridge",
+        captain_email="casey@example.com",
+        captain_usta_number="123456",
+        registration_type="Closed Team",
+        team_name="Baseline Bandits",
+        gender_day="Mens Weekend",
+        level="4.0",
+        league_name="FALL 18+ League",
+        facility="Austin Tennis Center",
+    )
+
+    row = polling.build_team_registration_sheet_row(message, registration, settings)
+
+    assert row["Email Address"] == "casey@example.com"
+    assert row["CC Email"] == "lincolnward@playatctennis.com"
+
+
+def test_is_blank_reply_draft_detects_default_salutation_and_signature_only():
+    draft_html = polling.build_reply_html_with_signature_placeholder("Saint", [])
+
+    assert polling.is_blank_reply_draft(draft_html) is True
+
+
+def test_is_blank_reply_draft_allows_meaningful_reply_content():
+    draft_html = polling.build_reply_html_with_signature_placeholder(
+        "Saint",
+        ["We can approve that change for next week."],
+    )
+
+    assert polling.is_blank_reply_draft(draft_html) is False
 
 
 def test_regenerate_message_draft_rebuilds_blocked_team_registration(monkeypatch, tmp_path):
@@ -889,7 +1012,7 @@ def test_regenerate_message_draft_rebuilds_blocked_team_registration(monkeypatch
     assert saved["draft_subject"] == "Re: New Fall Team Registration from William HerridgeBanditos"
     assert "Hi William," in str(saved.get("draft_html", ""))
     assert "Austin Country Club" in str(saved.get("draft_html", ""))
-    assert "Casey Herridge" in str(saved.get("draft_html", ""))
+    assert "Email signature populated here" in str(saved.get("draft_html", ""))
 
     event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
     assert "message_draft_regenerated" in event_types
@@ -929,6 +1052,61 @@ def test_team_registration_workflow_sends_duplicate_alert(monkeypatch, tmp_path)
     assert duplicate_notice["subject"] == "Duplicate team registration needs review: TBD"
     assert duplicate_notice["to_addresses"] == ["william@theherridges.com"]
     assert "Existing RecipientList row" in duplicate_notice["html_body"]
+
+
+def test_send_reply_message_caches_requested_recipients(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    settings.gmail_test_send_override = "william@theherridges.com"
+    monkeypatch.setattr(polling, "GmailClient", FakeSendGmailClient)
+    FakeSendGmailClient.sent_messages.clear()
+
+    mailbox = Mailbox(gmail_address="casey@austintennis.org", display_name="Casey Herridge", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(mailbox_id=mailbox.id, gmail_thread_id="thread-1", subject_canonical="Registration question")
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-send-1",
+        subject="Registration question",
+        from_display="Amy Mulvihill",
+        from_address="amy@tennisaustin.org",
+        rfc_message_id="<msg-send-1@example.com>",
+        status="new",
+        draft_state="ready",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.commit()
+
+    polling.send_reply_message(
+        session,
+        settings,
+        message.id,
+        draft_to=["parent@example.com"],
+        draft_cc=["Casey Herridge <casey@austintennis.org>"],
+        draft_subject="Re: Registration question",
+        draft_html="<p>Reply body</p>",
+    )
+
+    contacts = list(session.scalars(select(KnownContact).order_by(KnownContact.email)))
+    assert [contact.email for contact in contacts] == [
+        "casey@austintennis.org",
+        "parent@example.com",
+    ]
+    assert contacts[0].display_name == "Casey Herridge"
+    assert contacts[0].use_count == 1
+    assert contacts[1].use_count == 1
+
+    suggestions = polling.list_known_contacts(session, query="case", limit=5)
+    assert len(suggestions) == 1
+    assert suggestions[0].email == "casey@austintennis.org"
 
 
 def test_utw_facility_request_auto_classifies_and_auto_ignores(tmp_path):
@@ -1079,6 +1257,46 @@ def test_build_default_draft_html_uses_first_name_greeting():
 
     assert "Hi Jane," in draft_html
     assert "Hello Jane Flynn" not in draft_html
+    assert "Email signature populated here" in draft_html
+    assert polling.SIGNATURE_PREVIEW_HREF in draft_html
+
+
+def test_build_outbound_reply_html_replaces_signature_placeholder(tmp_path):
+    session = make_session()
+
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    thread = MessageThread(mailbox_id=mailbox.id, gmail_thread_id="thread-signature", subject_canonical="Question")
+    session.add(thread)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        thread_id=thread.id,
+        gmail_message_id="msg-signature",
+        subject="Question",
+        from_display="Parent Example",
+        from_address="parent@example.com",
+        status="new",
+        draft_state="ready",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.commit()
+
+    draft_html = (
+        '<p>Hello body</p>'
+        '<div><a><em>Email signature populated here</em></a></div>'
+    )
+
+    outbound = polling.build_outbound_reply_html(message, draft_html, [])
+
+    assert "Email signature populated here" not in outbound
+    assert "Casey Herridge" in outbound
+    assert "Tennis Austin" in outbound
 
 
 def test_get_latest_scheduled_poll_slot_uses_daytime_quarter_hour(tmp_path):
@@ -1152,6 +1370,43 @@ def test_run_scheduled_poll_cycle_only_polls_due_mailboxes(monkeypatch, tmp_path
     poll_runs = session.scalars(select(PollRun).order_by(PollRun.id)).all()
     assert len(poll_runs) == 1
     assert poll_runs[0].trigger_source == "scheduler"
+
+
+def test_refresh_mailboxes_for_portal_if_stale_only_polls_stale_mailboxes(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    stale_mailbox = Mailbox(gmail_address="stale@cata.test", display_name="Stale Inbox", is_active=True)
+    fresh_mailbox = Mailbox(
+        gmail_address="fresh@cata.test",
+        display_name="Fresh Inbox",
+        is_active=True,
+        last_polled_at=datetime(2026, 7, 23, 19, 14),
+    )
+    session.add_all([stale_mailbox, fresh_mailbox])
+    session.commit()
+
+    polled: list[tuple[int, str]] = []
+
+    def fake_poll_mailbox(_session, _settings, mailbox_id: int, trigger_source: str = "portal"):
+        polled.append((mailbox_id, trigger_source))
+        mailbox = _session.get(Mailbox, mailbox_id)
+        assert mailbox is not None
+        mailbox.last_polled_at = datetime(2026, 7, 23, 19, 17)
+        _session.commit()
+        return polling.PollOutcome(poll_run_id=1, messages_discovered=0, messages_persisted=0)
+
+    monkeypatch.setattr(polling, "poll_mailbox", fake_poll_mailbox)
+
+    result = polling.refresh_mailboxes_for_portal_if_stale(
+        session,
+        settings,
+        now=datetime(2026, 7, 23, 19, 17),
+    )
+
+    assert result.total_mailboxes == 2
+    assert result.refreshed_mailboxes == 1
+    assert result.failed_mailboxes == 0
+    assert polled == [(stale_mailbox.id, "portal_auto_refresh")]
 
 
 def test_first_name_from_sender_handles_display_and_email_variants():
@@ -1273,6 +1528,59 @@ def test_poll_mailbox_skips_malformed_gmail_payloads(monkeypatch, tmp_path):
     ).all()
     assert len(audit_events) == 1
     assert "bad-1" in audit_events[0].summary
+
+
+def test_analyze_message_work_item_records_exception_details(monkeypatch, tmp_path):
+    session = make_session()
+    settings = make_settings(tmp_path)
+    mailbox = Mailbox(gmail_address="pilot@cata.test", display_name="Pilot Inbox", is_active=True)
+    session.add(mailbox)
+    session.flush()
+
+    message = Message(
+        mailbox_id=mailbox.id,
+        gmail_message_id="msg-analysis-failure",
+        subject="New Fall Team Registration from Failure Case",
+        from_display="League Committee",
+        from_address="leaguecommittee@austintennis.org",
+        status="new",
+        draft_state="not_started",
+        priority="normal",
+        informational_only=False,
+    )
+    session.add(message)
+    session.flush()
+
+    work_item = WorkItem(
+        work_type="analyze_message",
+        status="pending",
+        mailbox_id=mailbox.id,
+        message_id=message.id,
+        payload_json=json.dumps({"message_id": message.id}),
+        scheduled_for=datetime.now(),
+    )
+    session.add(work_item)
+    session.commit()
+
+    monkeypatch.setattr(polling, "run_post_classification_workflows", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("boom failure")))
+
+    polling.analyze_message_work_item(session, settings, work_item)
+
+    refreshed_work_item = session.get(WorkItem, work_item.id)
+    assert refreshed_work_item is not None
+    assert refreshed_work_item.status == "failed"
+    assert "ValueError: boom failure" in refreshed_work_item.error_summary
+
+    audit_event = session.scalar(
+        select(AuditEvent)
+        .where(AuditEvent.message_id == message.id, AuditEvent.event_type == "message_analysis_failed")
+        .order_by(AuditEvent.id.desc())
+    )
+    assert audit_event is not None
+    detail = json.loads(audit_event.detail_json or "{}")
+    assert detail["exception_type"] == "ValueError"
+    assert detail["exception_message"] == "boom failure"
+    assert detail["stage"] == "deterministic_analysis_or_post_processing"
 
 
 def test_parse_team_registration_fields_handles_home_courts_contact_variants():
@@ -1469,3 +1777,4 @@ def test_build_outbound_reply_html_reuses_prior_reply_history_without_duplicatin
     assert "First sent reply" in outbound
     assert outbound.count("Original message") == 1
     assert outbound.count("Original email body") == 1
+    assert "Casey Herridge" in outbound

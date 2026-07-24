@@ -10,6 +10,7 @@ from src.shared.database import Base, get_db_session
 from src.shared.models import (
     AuditEvent,
     Category,
+    KnownContact,
     Mailbox,
     Message,
     MessageArtifact,
@@ -366,6 +367,8 @@ def test_queue_and_message_detail_render(tmp_path):
         assert sent_payload["cc_addresses"] == []
         assert sent_payload["subject"] == "Re: Registration question"
         assert "Test reply" in sent_payload["html_body"]
+        assert "Casey Herridge" in sent_payload["html_body"]
+        assert "Email signature populated here" not in sent_payload["html_body"]
         assert "Original message" in sent_payload["html_body"]
         assert "League registration opens next week." in sent_payload["html_body"]
         assert sent_payload["thread_id"] == "thread-1"
@@ -380,6 +383,17 @@ def test_queue_and_message_detail_render(tmp_path):
 
         event_types = list(session.scalars(select(AuditEvent.event_type).where(AuditEvent.message_id == message.id)))
         assert "message_reply_sent" in event_types
+
+        known_contact_response = client.get("/api/known-contacts?q=case")
+        assert known_contact_response.status_code == 200
+        known_contacts = known_contact_response.json()["contacts"]
+        assert known_contacts[0]["email"] == "casey@austintennis.org"
+
+        stored_contacts = list(session.scalars(select(KnownContact).order_by(KnownContact.email)))
+        assert [contact.email for contact in stored_contacts] == [
+            "casey@austintennis.org",
+            "parent@example.com",
+        ]
 
         ignore_response = client.post(
             f"/messages/{second_message.id}/ignore",

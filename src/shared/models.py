@@ -230,6 +230,18 @@ class MessageParticipant(Base):
     message: Mapped[Message] = relationship(back_populates="participants")
 
 
+class KnownContact(Base):
+    __tablename__ = "known_contacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(Text)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class MessageHeader(Base):
     __tablename__ = "message_headers"
 

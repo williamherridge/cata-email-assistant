@@ -37,6 +37,13 @@ CATEGORY_PROFILES = {
         "default_informational_only": True,
         "priority_hint": "low",
     },
+    "make-up date form": {
+        "description": "Structured CATA form submission that captures make-up match dates.",
+        "default_draft_behavior": "auto_ignore_candidate",
+        "default_reply_needed": False,
+        "default_informational_only": True,
+        "priority_hint": "low",
+    },
     "team registration submission": {
         "description": "Structured CATA form submission for a new team registration that needs manual downstream processing.",
         "default_draft_behavior": "manual_registration_summary",

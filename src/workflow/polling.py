@@ -8,6 +8,7 @@ import html
 import json
 import logging
 import re
+import time as time_module
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from email.utils import getaddresses
@@ -35,6 +36,7 @@ from src.gmail_ingest.parsing import (
 )
 from src.shared.config import Settings
 from src.shared.config import get_settings
+from src.shared.database import engine
 from src.workflow.classification import classify_message_deterministically
 from src.workflow.classification import TEAM_REGISTRATION_CATEGORY
 from src.workflow.taxonomy import sync_taxonomy_catalog
@@ -48,6 +50,7 @@ from src.shared.models import (
     MessageArtifact,
     MessageAttachment,
     MessageHeader,
+    KnownContact,
     MessageParticipant,
     MessageThread,
     PollRun,
@@ -60,6 +63,8 @@ SENT_REPLY_HTML_ARTIFACT = "sent_reply_html"
 SENT_REPLY_METADATA_ARTIFACT = "sent_reply_metadata"
 PORTAL_DRAFT_ARTIFACT = "portal_reply_draft"
 DEFAULT_SIGNATURE_LOGO_PATH = Path("src/admin_portal/static/images/tennis-austin-full-logo")
+SIGNATURE_PLACEHOLDER_LABEL = "Email signature populated here"
+SIGNATURE_PREVIEW_HREF = "https://signature-preview.local/"
 logger = logging.getLogger(__name__)
 _DEFAULT_SIGNATURE_LOGO_HTML: str | None = None
 TEAM_REGISTRATION_PROCESSED_STATUS = "processed"
@@ -85,6 +90,13 @@ class ScheduledPollResult:
     polled_mailboxes: int
     failed_mailboxes: int
     skipped_mailboxes: int
+
+
+@dataclass
+class PortalRefreshResult:
+    total_mailboxes: int
+    refreshed_mailboxes: int
+    failed_mailboxes: int
 
 
 @dataclass
@@ -118,6 +130,7 @@ def ensure_runtime_directories(settings: Settings) -> None:
     if settings.resolved_database_url.startswith("sqlite:///"):
         sqlite_path = Path(settings.resolved_database_url.removeprefix("sqlite:///"))
         sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    KnownContact.__table__.create(bind=engine, checkfirst=True)
 
 
 def ensure_default_mailbox(session: Session, settings: Settings) -> Mailbox | None:
@@ -506,6 +519,41 @@ def get_due_mailboxes_for_scheduled_poll(
     return [mailbox for mailbox in mailboxes if is_mailbox_due_for_scheduled_poll(mailbox, settings, now=now)]
 
 
+def refresh_mailboxes_for_portal_if_stale(
+    session: Session,
+    settings: Settings,
+    *,
+    now: datetime | None = None,
+    max_staleness_minutes: int = 3,
+) -> PortalRefreshResult:
+    ensure_runtime_directories(settings)
+    reference = now or utcnow()
+    staleness_cutoff = reference - timedelta(minutes=max(max_staleness_minutes, 1))
+    mailboxes = list(session.scalars(select(Mailbox).where(Mailbox.is_active.is_(True)).order_by(Mailbox.id)))
+    stale_mailboxes = [
+        mailbox
+        for mailbox in mailboxes
+        if mailbox.last_polled_at is None or mailbox.last_polled_at < staleness_cutoff
+    ]
+
+    refreshed_mailboxes = 0
+    failed_mailboxes = 0
+    for mailbox in stale_mailboxes:
+        try:
+            poll_mailbox(session, settings, mailbox.id, trigger_source="portal_auto_refresh")
+            refreshed_mailboxes += 1
+        except Exception:
+            failed_mailboxes += 1
+            session.rollback()
+            logger.exception("Portal auto-refresh polling failed for mailbox %s.", mailbox.id)
+
+    return PortalRefreshResult(
+        total_mailboxes=len(mailboxes),
+        refreshed_mailboxes=refreshed_mailboxes,
+        failed_mailboxes=failed_mailboxes,
+    )
+
+
 def run_scheduled_poll_cycle(
     session: Session,
     settings: Settings,
@@ -777,7 +825,7 @@ def analyze_message_work_item(session: Session, settings: Settings, work_item: W
         if not is_sent_message(message) and message.assigned_category_id is None:
             result = apply_deterministic_classification(session, message)
         run_post_classification_workflows(session, settings, message)
-    except (OSError, ValueError, TypeError, RuntimeError, HttpError):
+    except (OSError, ValueError, TypeError, RuntimeError, HttpError) as exc:
         logger.exception("Deterministic analysis failed for message %s.", message.id)
         fail_work_item(
             session,
@@ -786,7 +834,17 @@ def analyze_message_work_item(session: Session, settings: Settings, work_item: W
             work_item=work_item,
             event_type="message_analysis_failed",
             summary=f"Deterministic analysis or post-processing failed for message {message.id}.",
-            error_summary="Unexpected content, spreadsheet, or artifact failure during deterministic analysis.",
+            error_summary=build_failure_error_summary(
+                "Unexpected content, spreadsheet, or artifact failure during deterministic analysis.",
+                exc,
+            ),
+            detail={
+                "message_id": message.id,
+                "work_item_id": work_item.id,
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "stage": "deterministic_analysis_or_post_processing",
+            },
         )
         return
 
@@ -937,10 +995,14 @@ def run_team_registration_workflow(session: Session, settings: Settings, message
         return
 
     client = TeamRegistrationRecipientListClient(settings)
-    duplicate = client.find_duplicate_row(
-        team_name=registration.team_name,
-        captain_name=registration.captain_name,
-        league_value=registration.combined_league_value,
+    duplicate = _run_team_registration_sheet_operation_with_retry(
+        "find duplicate team-registration row",
+        message_id=message.id,
+        operation=lambda: client.find_duplicate_row(
+            team_name=registration.team_name,
+            captain_name=registration.captain_name,
+            league_value=registration.combined_league_value,
+        ),
     )
     if duplicate is not None:
         send_team_registration_duplicate_alert(session, settings, message, registration, duplicate)
@@ -966,8 +1028,12 @@ def run_team_registration_workflow(session: Session, settings: Settings, message
         session.flush()
         return
 
-    appended_row_number = client.append_team_registration_row(
-        build_team_registration_sheet_row(message, registration, settings)
+    appended_row_number = _run_team_registration_sheet_operation_with_retry(
+        "append team-registration row",
+        message_id=message.id,
+        operation=lambda: client.append_team_registration_row(
+            build_team_registration_sheet_row(message, registration, settings)
+        ),
     )
     message.status = TEAM_REGISTRATION_PROCESSED_STATUS
     message.reply_needed = False
@@ -1492,6 +1558,174 @@ def read_sent_reply_records(
     return [fallback_record]
 
 
+def list_known_contacts(
+    session: Session,
+    *,
+    query: str = "",
+    limit: int = 8,
+) -> list[KnownContact]:
+    ensure_known_contact_store(session)
+    normalized_query = normalize_optional_text(query).casefold()
+    contacts = list(
+        session.scalars(
+            select(KnownContact).order_by(
+                desc(KnownContact.last_used_at),
+                desc(KnownContact.use_count),
+                KnownContact.email,
+            )
+        )
+    )
+    if normalized_query:
+        prefix_matches = [
+            contact
+            for contact in contacts
+            if (contact.email or "").casefold().startswith(normalized_query)
+            or (contact.display_name or "").casefold().startswith(normalized_query)
+        ]
+        substring_matches = [
+            contact
+            for contact in contacts
+            if contact not in prefix_matches
+            and (
+                normalized_query in (contact.email or "").casefold()
+                or normalized_query in (contact.display_name or "").casefold()
+            )
+        ]
+        contacts = [*prefix_matches, *substring_matches]
+    return contacts[: max(limit, 1)]
+
+
+def backfill_known_contacts_from_sent_history(session: Session) -> int:
+    ensure_known_contact_store(session, run_backfill=False)
+    if session.scalar(select(KnownContact.id).limit(1)) is not None:
+        return 0
+
+    inserted = 0
+    messages = list(
+        session.scalars(
+            select(Message)
+            .options(
+                selectinload(Message.artifacts),
+                selectinload(Message.participants),
+                selectinload(Message.mailbox),
+            )
+            .where(Message.status == "responded")
+            .order_by(Message.responded_at, Message.id)
+        )
+    )
+    for message in messages:
+        for record in read_sent_reply_records(message, allow_gmail_fallback=False):
+            sent_at = normalize_optional_datetime(record.metadata.get("sent_at")) or record.created_at or utcnow()
+            inserted += record_known_contacts_from_reply_metadata(
+                session,
+                message,
+                record.metadata,
+                used_at=sent_at,
+            )
+    if inserted:
+        session.commit()
+    return inserted
+
+
+def ensure_known_contact_store(session: Session, *, run_backfill: bool = True) -> None:
+    bind = session.get_bind()
+    if bind is None:
+        return
+    KnownContact.__table__.create(bind=bind, checkfirst=True)
+    if run_backfill and session.scalar(select(KnownContact.id).limit(1)) is None:
+        backfill_known_contacts_from_sent_history(session)
+
+
+def record_known_contacts_from_reply_metadata(
+    session: Session,
+    message: Message,
+    metadata: dict[str, object],
+    *,
+    used_at: datetime | None = None,
+) -> int:
+    requested_to = [str(value) for value in (metadata.get("requested_to") or []) if value]
+    requested_cc = [str(value) for value in (metadata.get("requested_cc") or []) if value]
+    return record_known_contacts_from_outbound_addresses(
+        session,
+        message,
+        requested_to=requested_to,
+        requested_cc=requested_cc,
+        used_at=used_at,
+    )
+
+
+def record_known_contacts_from_outbound_addresses(
+    session: Session,
+    message: Message,
+    *,
+    requested_to: list[str],
+    requested_cc: list[str],
+    used_at: datetime | None = None,
+) -> int:
+    ensure_known_contact_store(session, run_backfill=False)
+    timestamp = used_at or utcnow()
+    distinct_addresses: dict[str, str | None] = {}
+    for raw_address in [*requested_to, *requested_cc]:
+        participant = parse_email_address(raw_address)
+        if participant is None:
+            continue
+        normalized_email = normalize_optional_text(participant.email_address).casefold()
+        if not normalized_email or normalized_email in distinct_addresses:
+            continue
+        display_name = normalize_optional_text(participant.display_name) or infer_known_contact_display_name(
+            message,
+            normalized_email,
+        )
+        distinct_addresses[normalized_email] = display_name
+
+    for normalized_email, display_name in distinct_addresses.items():
+        known_contact = session.scalar(select(KnownContact).where(KnownContact.email == normalized_email))
+        if known_contact is None:
+            session.add(
+                KnownContact(
+                    email=normalized_email,
+                    display_name=display_name,
+                    use_count=1,
+                    last_used_at=timestamp,
+                )
+            )
+            session.flush()
+            continue
+        known_contact.use_count += 1
+        if display_name and not normalize_optional_text(known_contact.display_name):
+            known_contact.display_name = display_name
+        if known_contact.last_used_at is None or timestamp >= known_contact.last_used_at:
+            known_contact.last_used_at = timestamp
+
+    return len(distinct_addresses)
+
+
+def infer_known_contact_display_name(message: Message, normalized_email: str) -> str | None:
+    for participant in message.participants:
+        participant_email = normalize_optional_text(participant.email_address).casefold()
+        if participant_email == normalized_email:
+            return normalize_optional_text(participant.display_name) or None
+    if message.mailbox is not None:
+        mailbox_email = normalize_optional_text(message.mailbox.gmail_address).casefold()
+        if mailbox_email == normalized_email:
+            return normalize_optional_text(message.mailbox.display_name) or None
+    return None
+
+
+def normalize_optional_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    try:
+        return datetime.fromisoformat(candidate.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
 def fetch_latest_sent_reply_from_gmail(message: Message, settings: Settings) -> SentReplyRecord | None:
     if message.thread is None or message.mailbox is None or not message.thread.gmail_thread_id:
         return None
@@ -1624,6 +1858,41 @@ def fail_work_item(
         )
     )
     session.flush()
+
+
+def build_failure_error_summary(prefix: str, exc: Exception) -> str:
+    exception_message = str(exc).strip()
+    if not exception_message:
+        return f"{prefix} ({type(exc).__name__})"
+    return f"{prefix} ({type(exc).__name__}: {exception_message})"
+
+
+def _run_team_registration_sheet_operation_with_retry(
+    operation_name: str,
+    *,
+    message_id: int,
+    operation,
+    attempts: int = 2,
+):
+    last_exception: Exception | None = None
+    for attempt in range(1, max(attempts, 1) + 1):
+        try:
+            return operation()
+        except (HttpError, OSError) as exc:
+            last_exception = exc
+            if attempt >= max(attempts, 1):
+                raise
+            logger.warning(
+                "Retrying Google Sheets operation '%s' for message %s after %s: %s",
+                operation_name,
+                message_id,
+                type(exc).__name__,
+                exc,
+            )
+            time_module.sleep(1.0)
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError(f"Google Sheets operation '{operation_name}' did not execute.")
 
 
 def normalize_optional_text(value: str | None) -> str | None:
@@ -1823,6 +2092,8 @@ def send_reply_message(
         raise ValueError(f"Message {message_id} was not found.")
     if not draft_html.strip():
         raise ValueError("Reply draft is empty.")
+    if is_blank_reply_draft(draft_html):
+        raise ValueError("Reply draft still matches the default blank reply.")
 
     requested_to = draft_to
     requested_cc = draft_cc
@@ -1903,6 +2174,13 @@ def send_reply_message(
             ),
         )
     )
+    record_known_contacts_from_outbound_addresses(
+        session,
+        message,
+        requested_to=requested_to,
+        requested_cc=requested_cc,
+        used_at=message.responded_at,
+    )
     session.commit()
     return get_message_detail(session, message_id) or message
 
@@ -1941,6 +2219,8 @@ def save_message_draft(
         raise ValueError(f"Message {message_id} was not found.")
     if not draft_html.strip():
         raise ValueError("Reply draft is empty.")
+    if is_blank_reply_draft(draft_html):
+        raise ValueError("Reply draft still matches the default blank reply.")
 
     draft_folder = settings.resolved_artifact_root / "drafts" / f"mailbox-{message.mailbox_id}"
     draft_folder.mkdir(parents=True, exist_ok=True)
@@ -1985,9 +2265,9 @@ def build_default_draft_html(message: Message) -> str:
     if saved is not None:
         saved_html = str(saved.get("draft_html") or "").strip()
         if saved_html:
-            return saved_html
+            return prepare_draft_html_for_editor(saved_html)
 
-    return build_generated_draft_html(message)
+    return prepare_draft_html_for_editor(build_generated_draft_html(message))
 
 
 def build_generated_draft_html(message: Message) -> str:
@@ -2000,7 +2280,7 @@ def build_generated_draft_html(message: Message) -> str:
         return summary_html
 
     recipient_name = resolve_reply_recipient_name(message)
-    return build_reply_html_with_signature(recipient_name, [])
+    return build_reply_html_with_signature_placeholder(recipient_name, [])
 
 
 def build_generated_draft_payload(message: Message, settings: Settings) -> dict[str, str]:
@@ -2035,7 +2315,7 @@ def regenerate_message_draft(session: Session, settings: Settings, message_id: i
     )
 
 
-def build_reply_html_with_signature(recipient_name: str, body_paragraphs: list[str]) -> str:
+def build_reply_html_with_signature_placeholder(recipient_name: str, body_paragraphs: list[str]) -> str:
     html_parts = [
         (
             f'<p style="margin: 0 0 0.35rem; font-family: Aptos, Calibri, sans-serif; '
@@ -2048,7 +2328,15 @@ def build_reply_html_with_signature(recipient_name: str, body_paragraphs: list[s
             f"{paragraph}"
             "</p>"
         )
-    html_parts.extend(
+    html_parts.append(
+        '<p style="margin: 0 0 0.35rem; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;"><br></p>'
+    )
+    html_parts.append(build_signature_placeholder_html())
+    return "".join(html_parts)
+
+
+def build_signature_html() -> str:
+    return "".join(
         [
             '<p style="margin: 0 0 0.16rem; font-family: Aptos, Calibri, sans-serif; font-size: 12pt; font-weight: 400;">Thank you,</p>',
             '<p style="margin: 0; font-family: Tahoma, sans-serif; font-size: 11pt; font-weight: 700;">Casey Herridge</p>',
@@ -2061,7 +2349,31 @@ def build_reply_html_with_signature(recipient_name: str, body_paragraphs: list[s
             f"{build_default_signature_logo_html()}",
         ]
     )
-    return "".join(html_parts)
+
+
+def build_signature_placeholder_html() -> str:
+    return (
+        '<p style="margin: 0.35rem 0 0; line-height: 1.25;">'
+        f'<a href="{html.escape(SIGNATURE_PREVIEW_HREF, quote=True)}" contenteditable="false">'
+        f'<span style="font-style: italic; color: #607070; text-decoration: underline;">{html.escape(SIGNATURE_PLACEHOLDER_LABEL)}</span>'
+        "</a>"
+        "</p>"
+    )
+
+
+def is_blank_reply_draft(draft_html: str) -> bool:
+    normalized_html = normalize_signature_placeholder_html(sanitize_email_html(draft_html or ""))
+    without_signature = signature_placeholder_pattern().sub("", normalized_html)
+    without_greeting = re.sub(
+        r"<(?:p|div)[^>]*>\s*Hi\s+.*?,\s*</(?:p|div)>",
+        "",
+        without_signature,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    without_breaks = re.sub(r"<br\s*/?>", " ", without_greeting, flags=re.IGNORECASE)
+    text_only = re.sub(r"<[^>]+>", " ", without_breaks)
+    normalized_text = re.sub(r"\s+", " ", html.unescape(text_only).replace("\xa0", " ")).strip(" ,")
+    return not normalized_text
 
 
 def build_default_signature_logo_html() -> str:
@@ -2139,7 +2451,7 @@ def build_outbound_reply_html(
     draft_html: str,
     prior_sent_replies: list[SentReplyRecord] | None = None,
 ) -> str:
-    cleaned_draft = sanitize_email_html(draft_html)
+    cleaned_draft = ensure_signature_html_in_draft(sanitize_email_html(draft_html))
     sections = [cleaned_draft]
 
     prior_records = prior_sent_replies or []
@@ -2175,6 +2487,39 @@ def build_outbound_reply_html(
             f"{original_body_html}"
         )
     return "".join(sections)
+
+
+def prepare_draft_html_for_editor(draft_html: str) -> str:
+    cleaned = sanitize_email_html(draft_html)
+    signature_html = build_signature_html()
+    if signature_html in cleaned:
+        cleaned = cleaned.replace(signature_html, build_signature_placeholder_html())
+    return normalize_signature_placeholder_html(cleaned)
+
+
+def expand_signature_placeholder_html(draft_html: str) -> str:
+    return signature_placeholder_pattern().sub(build_signature_html(), draft_html)
+
+
+def normalize_signature_placeholder_html(draft_html: str) -> str:
+    return signature_placeholder_pattern().sub(build_signature_placeholder_html(), draft_html)
+
+
+def signature_placeholder_pattern() -> re.Pattern[str]:
+    escaped_label = re.escape(SIGNATURE_PLACEHOLDER_LABEL)
+    return re.compile(
+        rf"<(?:p|div)[^>]*>\s*(?:<a[^>]*>)?\s*(?:<span[^>]*>)?\s*(?:<em[^>]*>)?\s*{escaped_label}\s*"
+        rf"(?:</em>)?\s*(?:</span>)?\s*(?:</a>)?\s*</(?:p|div)>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def ensure_signature_html_in_draft(draft_html: str) -> str:
+    expanded = expand_signature_placeholder_html(draft_html)
+    signature_html = build_signature_html()
+    if signature_html in expanded:
+        return expanded
+    return f"{expanded}{signature_html}"
 
 
 def build_manual_work_summary_html(message: Message) -> str:
@@ -2366,8 +2711,8 @@ def build_team_registration_sheet_row(
         "Team Code": "",
         "Team Name": registration.team_name,
         "Captain(s)": registration.captain_name,
-        "Email Address": "",
-        "Email Provided": registration.captain_email,
+        "Email Address": registration.captain_email,
+        "CC Email": resolve_team_registration_cc_email(registration.facility),
         "Captain USTA Number": registration.captain_usta_number,
         "League": combined_league,
         "Registration Type": registration.registration_type,
@@ -2382,6 +2727,18 @@ def build_team_registration_sheet_row(
         "SourceMessageId": str(message.id),
         "IngestedAt": format_local_timestamp_for_sheet(utcnow(), settings),
     }
+
+
+def resolve_team_registration_cc_email(facility: str) -> str:
+    normalized_facility = clean_team_registration_value(facility).casefold()
+    if normalized_facility == "austin tennis center":
+        return "lincolnward@playatctennis.com"
+    if normalized_facility in {
+        "lakeway world of tennis",
+        "the hills sports complex - lakeway",
+    }:
+        return "Ivi.Kerrigan@invitedclubs.com"
+    return ""
 
 
 def format_local_timestamp_for_sheet(value: datetime, settings: Settings) -> str:
@@ -2402,7 +2759,7 @@ def build_team_registration_facility_blocked_draft_html(
 ) -> str:
     recipient_name = extract_first_name(registration.captain_name) or resolve_reply_recipient_name(message)
     facility = html.escape(registration.facility or "the selected facility")
-    return build_reply_html_with_signature(
+    return build_reply_html_with_signature_placeholder(
         recipient_name,
         [
             (

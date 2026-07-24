@@ -24,6 +24,7 @@ The project is now in early `Milestone B` work for the lean pilot runtime. Curre
 
 - `docs/product_requirements.md`: product and functional requirements
 - `docs/requirements/mvp_scope.md`: frozen MVP scope and remaining blockers
+- `docs/requirements/deterministic_rules.md`: current deterministic category and routing reference
 - `docs/phases.md`: lifecycle phases, milestones, and deliverables
 - `docs/operations/automatic_polling_setup.md`: lean pilot scheduled polling setup
 - `docs/repo_structure.md`: recommended repository structure for project artifacts

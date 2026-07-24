@@ -791,6 +791,119 @@
         font: inherit;
       }
 
+      .contact-autocomplete-shell {
+        position: relative;
+      }
+
+      .contact-suggestion-list {
+        position: absolute;
+        top: calc(100% + 0.2rem);
+        left: 0;
+        right: 0;
+        z-index: 30;
+        display: grid;
+        gap: 0;
+        padding: 0.28rem;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: color-mix(in srgb, var(--panel) 94%, white 6%);
+        box-shadow: 0 12px 32px rgba(49, 43, 30, 0.16);
+      }
+
+      .contact-suggestion-list[hidden] {
+        display: none;
+      }
+
+      .contact-suggestion-item {
+        border: 0;
+        border-radius: 10px;
+        padding: 0.42rem 0.55rem;
+        background: transparent;
+        color: var(--ink);
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .contact-suggestion-item:hover,
+      .contact-suggestion-item.active {
+        background: rgba(15, 118, 110, 0.1);
+        color: var(--accent-strong);
+      }
+
+      .contact-suggestion-primary {
+        font-weight: 600;
+        line-height: 1.2;
+      }
+
+      .contact-suggestion-secondary {
+        font-size: 0.84rem;
+        color: var(--muted);
+        line-height: 1.2;
+      }
+
+      .signature-placeholder {
+        margin-top: 0.45rem;
+        padding: 0.3rem 0;
+        font-style: italic;
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .signature-placeholder:focus {
+        outline: 2px solid rgba(15, 118, 110, 0.2);
+        outline-offset: 2px;
+        border-radius: 8px;
+      }
+
+      .signature-placeholder a {
+        color: var(--muted);
+        text-decoration: underline;
+      }
+
+      .signature-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: grid;
+        place-items: center;
+        padding: 1rem;
+        background: rgba(31, 42, 43, 0.28);
+      }
+
+      .signature-modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .signature-modal {
+        width: min(42rem, 100%);
+        max-height: min(80vh, 44rem);
+        overflow: auto;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        box-shadow: 0 18px 48px rgba(49, 43, 30, 0.22);
+        padding: 1rem;
+      }
+
+      .signature-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.8rem;
+      }
+
+      .signature-modal-header h3 {
+        margin: 0;
+      }
+
+      .signature-preview-body {
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 0.9rem;
+      }
+
       .checkbox-row {
         display: flex;
         align-items: center;
@@ -942,6 +1055,17 @@
       </section>
       {% block content %}{% endblock %}
     </main>
+    <div class="signature-modal-backdrop" data-signature-modal-backdrop hidden>
+      <div class="signature-modal">
+        <div class="signature-modal-header">
+          <h3>Signature Preview</h3>
+          <button type="button" class="button-secondary" data-signature-modal-close>Close</button>
+        </div>
+        <div class="signature-preview-body rendered-email-body" data-signature-modal-body>
+          <p class="muted" style="margin: 0;">Loading signature preview...</p>
+        </div>
+      </div>
+    </div>
     <script>
       document.addEventListener("DOMContentLoaded", () => {
         let skipDraftGuard = false;
@@ -1003,9 +1127,44 @@
 
             const workbench = form.closest("[data-queue-workbench]") || document;
             const editor = workbench.querySelector("[data-draft-editor]");
+            const signaturePlaceholderLabel = form.dataset.signaturePlaceholderLabel || "Email signature populated here";
+            const sendButton = workbench.querySelector("[data-send-button]");
+            const saveDraftButton = workbench.querySelector("[data-save-draft-button]");
             const trackedInputs = Array.from(
               form.querySelectorAll("input[name='draft_to'], input[name='draft_cc'], input[name='draft_subject']")
             );
+
+            const extractMeaningfulDraftText = (draftHtml) => {
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(draftHtml || "", "text/html");
+              const body = doc.body;
+              if (!body) return "";
+
+              body.querySelectorAll("a, p, div, span, em").forEach((element) => {
+                const text = (element.textContent || "").replace(/\u00a0/g, " ").trim();
+                if (!text) return;
+                if (text === signaturePlaceholderLabel) {
+                  element.remove();
+                  return;
+                }
+                if (/^hi\s+.+,\s*$/i.test(text)) {
+                  element.remove();
+                }
+              });
+
+              return (body.textContent || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().replace(/^[,\s]+|[,\s]+$/g, "");
+            };
+
+            const updateDraftActionState = () => {
+              const meaningfulDraftText = extractMeaningfulDraftText(editor?.innerHTML || "");
+              const blankReply = meaningfulDraftText.length === 0;
+              if (sendButton) {
+                sendButton.disabled = blankReply;
+              }
+              if (saveDraftButton) {
+                saveDraftButton.disabled = blankReply;
+              }
+            };
 
             const snapshotDraft = () => JSON.stringify({
               draft_to: form.querySelector("input[name='draft_to']")?.value || "",
@@ -1025,12 +1184,16 @@
 
             form.dataset.draftBaseline = snapshotDraft();
             form.dataset.draftDirty = "0";
+            updateDraftActionState();
 
             trackedInputs.forEach((input) => {
               input.addEventListener("input", evaluateDraftDirty);
             });
             if (editor) {
-              editor.addEventListener("input", evaluateDraftDirty);
+              editor.addEventListener("input", () => {
+                evaluateDraftDirty();
+                updateDraftActionState();
+              });
             }
 
             form.addEventListener("submit", (event) => {
@@ -1057,6 +1220,263 @@
                 note.textContent = "Sending test email and refreshing the queue...";
               }
             });
+          });
+        };
+
+        const initializeContactAutocomplete = (root = document) => {
+          root.querySelectorAll("input[data-contact-autocomplete]").forEach((input) => {
+            if (input.dataset.boundContactAutocomplete === "1") return;
+            input.dataset.boundContactAutocomplete = "1";
+
+            const shell = document.createElement("div");
+            shell.className = "contact-autocomplete-shell";
+            input.parentNode?.insertBefore(shell, input);
+            shell.appendChild(input);
+
+            const list = document.createElement("div");
+            list.className = "contact-suggestion-list";
+            list.hidden = true;
+            shell.appendChild(list);
+
+            let suggestions = [];
+            let activeIndex = -1;
+            let requestCounter = 0;
+
+            const hideSuggestions = () => {
+              suggestions = [];
+              activeIndex = -1;
+              list.hidden = true;
+              list.replaceChildren();
+            };
+
+            const getTokenBounds = () => {
+              const value = input.value || "";
+              const cursor = input.selectionStart ?? value.length;
+              const tokenStart = value.lastIndexOf(",", Math.max(cursor - 1, 0)) + 1;
+              let tokenEnd = value.indexOf(",", cursor);
+              if (tokenEnd < 0) tokenEnd = value.length;
+              return { value, tokenStart, tokenEnd };
+            };
+
+            const getCurrentToken = () => {
+              const { value, tokenStart, tokenEnd } = getTokenBounds();
+              return value.slice(tokenStart, tokenEnd).trim();
+            };
+
+            const renderSuggestions = () => {
+              list.replaceChildren();
+              if (!suggestions.length) {
+                hideSuggestions();
+                return;
+              }
+
+              suggestions.forEach((suggestion, index) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "contact-suggestion-item";
+                if (index === activeIndex) {
+                  button.classList.add("active");
+                }
+
+                const primary = document.createElement("div");
+                primary.className = "contact-suggestion-primary";
+                primary.textContent = suggestion.display_name || suggestion.email;
+                button.appendChild(primary);
+
+                if (suggestion.display_name) {
+                  const secondary = document.createElement("div");
+                  secondary.className = "contact-suggestion-secondary";
+                  secondary.textContent = suggestion.email;
+                  button.appendChild(secondary);
+                }
+
+                button.addEventListener("mousedown", (event) => {
+                  event.preventDefault();
+                  applySuggestion(suggestion);
+                });
+                list.appendChild(button);
+              });
+
+              list.hidden = false;
+            };
+
+            const applySuggestion = (suggestion) => {
+              const { value, tokenStart, tokenEnd } = getTokenBounds();
+              let before = value.slice(0, tokenStart).replace(/\s*$/, "");
+              const after = value.slice(tokenEnd);
+              const insertValue = suggestion.insert_value || suggestion.label || suggestion.email;
+
+              if (before && !before.endsWith(",")) {
+                before += ",";
+              }
+              if (before) {
+                before += " ";
+              }
+
+              input.value = `${before}${insertValue}${after}`;
+              const cursor = (before + insertValue).length;
+              input.setSelectionRange(cursor, cursor);
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              hideSuggestions();
+              input.focus();
+            };
+
+            const loadSuggestions = async () => {
+              const query = getCurrentToken();
+              const currentRequest = ++requestCounter;
+              try {
+                const url = new URL("/api/known-contacts", window.location.origin);
+                url.searchParams.set("q", query);
+                url.searchParams.set("limit", "8");
+                const response = await fetch(url.toString(), {
+                  headers: {
+                    "X-Requested-With": "fetch",
+                  },
+                });
+                if (!response.ok) {
+                  hideSuggestions();
+                  return;
+                }
+                const payload = await response.json();
+                if (currentRequest !== requestCounter) return;
+                suggestions = Array.isArray(payload.contacts) ? payload.contacts : [];
+                activeIndex = suggestions.length ? 0 : -1;
+                renderSuggestions();
+              } catch (_error) {
+                hideSuggestions();
+              }
+            };
+
+            input.addEventListener("input", () => {
+              loadSuggestions();
+            });
+
+            input.addEventListener("focus", () => {
+              loadSuggestions();
+            });
+
+            input.addEventListener("keydown", (event) => {
+              if (!suggestions.length) return;
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                activeIndex = (activeIndex + 1) % suggestions.length;
+                renderSuggestions();
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                activeIndex = (activeIndex - 1 + suggestions.length) % suggestions.length;
+                renderSuggestions();
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (activeIndex >= 0 && activeIndex < suggestions.length) {
+                  applySuggestion(suggestions[activeIndex]);
+                }
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                hideSuggestions();
+              }
+            });
+
+            input.addEventListener("blur", () => {
+              window.setTimeout(hideSuggestions, 120);
+            });
+
+            shell.addEventListener("mouseenter", () => {
+              if (suggestions.length && activeIndex < 0) {
+                activeIndex = 0;
+                renderSuggestions();
+              }
+            });
+          });
+        };
+
+        const initializeSignaturePreview = () => {
+          if (document.body.dataset.boundSignaturePreview === "1") return;
+          document.body.dataset.boundSignaturePreview = "1";
+
+          const backdrop = document.querySelector("[data-signature-modal-backdrop]");
+          const modalBody = document.querySelector("[data-signature-modal-body]");
+          let cachedSignatureHtml = "";
+
+          const closeModal = () => {
+            if (backdrop) {
+              backdrop.hidden = true;
+            }
+          };
+
+          const findPreviewTrigger = (target) => {
+            if (!(target instanceof Node)) return null;
+            const element = target.nodeType === Node.ELEMENT_NODE ? target : target.parentElement;
+            if (!(element instanceof Element)) return null;
+            return element.closest('a[href^="https://signature-preview.local/"]');
+          };
+
+          const openModal = async () => {
+            if (!backdrop || !modalBody) return;
+            backdrop.hidden = false;
+            if (cachedSignatureHtml) {
+              modalBody.innerHTML = cachedSignatureHtml;
+              return;
+            }
+
+            modalBody.innerHTML = '<p class="muted" style="margin: 0;">Loading signature preview...</p>';
+            try {
+              const response = await fetch("/api/signature-preview", {
+                headers: {
+                  "X-Requested-With": "fetch",
+                },
+              });
+              if (!response.ok) {
+                modalBody.innerHTML = '<p class="muted" style="margin: 0;">Signature preview is unavailable right now.</p>';
+                return;
+              }
+              const payload = await response.json();
+              cachedSignatureHtml = payload.html || "";
+              modalBody.innerHTML = cachedSignatureHtml || '<p class="muted" style="margin: 0;">Signature preview is unavailable right now.</p>';
+            } catch (_error) {
+              modalBody.innerHTML = '<p class="muted" style="margin: 0;">Signature preview is unavailable right now.</p>';
+            }
+          };
+
+          document.addEventListener("mousedown", (event) => {
+            const previewTrigger = findPreviewTrigger(event.target);
+            if (!previewTrigger) return;
+            event.preventDefault();
+          });
+
+          document.addEventListener("click", (event) => {
+            const previewTrigger = findPreviewTrigger(event.target);
+            if (previewTrigger) {
+              event.preventDefault();
+              openModal();
+              return;
+            }
+
+            const closeButton = event.target.closest("[data-signature-modal-close]");
+            if (closeButton || event.target === backdrop) {
+              event.preventDefault();
+              closeModal();
+            }
+          });
+
+          document.addEventListener("keydown", (event) => {
+            const previewTrigger = findPreviewTrigger(event.target);
+            if (
+              previewTrigger &&
+              (event.key === "Enter" || event.key === " ")
+            ) {
+              event.preventDefault();
+              openModal();
+              return;
+            }
+            if (event.key === "Escape" && backdrop && !backdrop.hidden) {
+              closeModal();
+            }
           });
         };
 
@@ -1281,6 +1701,9 @@
           document.addEventListener("click", (event) => {
             const anchor = event.target.closest("a[href]");
             if (!anchor) return;
+            if (anchor.matches('a[href^="https://signature-preview.local/"]')) {
+              return;
+            }
             if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             if (!confirmDiscardDraftChanges()) {
               event.preventDefault();
@@ -1334,6 +1757,7 @@
         const initializeWorkbench = (root = document) => {
           initializeEditorToolbar(root);
           initializeDraftForms(root);
+          initializeContactAutocomplete(root);
           initializeRenderedEmailBodies(root);
         };
 
@@ -1343,6 +1767,7 @@
         initializeHistoryDesktopSelection();
         initializeQueueKeyboardNavigation();
         initializeDraftNavigationGuard();
+        initializeSignaturePreview();
 
         const updateQueueLinksForViewport = () => {
           const mobile = window.matchMedia("(max-width: 900px)").matches;

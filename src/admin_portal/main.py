@@ -19,10 +19,13 @@ from src.admin_portal.formatting import (
     format_queue_received_datetime,
 )
 from src.shared.config import get_settings
-from src.shared.database import get_db_session
+from src.shared.database import SessionLocal, get_db_session
 from src.workflow.taxonomy import list_active_categories, list_active_subcategories, sync_taxonomy_catalog
 from src.workflow.polling import (
+    backfill_known_contacts_from_sent_history,
     build_default_draft_html,
+    is_blank_reply_draft,
+    build_signature_html,
     get_default_reply_to_addresses,
     build_reply_subject,
     ensure_default_mailbox,
@@ -37,6 +40,7 @@ from src.workflow.polling import (
     has_prior_sent_reply,
     list_history_messages,
     list_mailboxes,
+    list_known_contacts,
     list_queue_messages,
     mark_message_opened,
     normalize_history_tab,
@@ -46,6 +50,7 @@ from src.workflow.polling import (
     parse_send_form,
     parse_return_to,
     poll_mailbox,
+    refresh_mailboxes_for_portal_if_stale,
     read_body_artifact,
     read_body_html_artifact,
     read_sent_reply_records,
@@ -72,11 +77,20 @@ templates.env.filters["queue_received_datetime"] = lambda value: format_queue_re
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_runtime_directories(settings)
+    session = SessionLocal()
+    try:
+        backfill_known_contacts_from_sent_history(session)
+    except Exception:
+        session.rollback()
+        logger.exception("Known contact backfill failed during startup.")
+    finally:
+        session.close()
     yield
 
 
 app = FastAPI(title="League Assistant", lifespan=lifespan)
 PAGE_ERROR_MESSAGES = {
+    "blank_draft_blocked": "Add some reply content before saving or sending. A salutation and signature alone count as a blank message.",
     "history_load_failed": "History could not be fully loaded. The app stayed online, but some data could not be read.",
     "mailbox_poll_failed": "Polling did not complete. The app stayed online, but Gmail or stored data returned an unexpected error.",
     "message_action_failed": "The requested message action could not be completed. No partial change should be assumed.",
@@ -265,6 +279,7 @@ def build_queue_selection_context(
     filter_query: str,
 ):
     return {
+        "draft_is_blank_reply": is_blank_reply_draft(build_default_draft_html(selected_message)) if selected_message else False,
         "selected_message": selected_message,
         "selected_message_id": selected_id,
         "reply_to_addresses": get_reply_to_addresses(selected_message) if selected_message else "",
@@ -348,6 +363,30 @@ def root() -> RedirectResponse:
     return RedirectResponse(url="/queue", status_code=302)
 
 
+@app.get("/api/known-contacts")
+def known_contacts_api(request: Request, db: Session = Depends(get_db_session)) -> dict[str, list[dict[str, str | None]]]:
+    query = (request.query_params.get("q") or "").strip()
+    limit_raw = request.query_params.get("limit") or ""
+    limit = int(limit_raw) if limit_raw.isdigit() else 8
+    contacts = list_known_contacts(db, query=query, limit=min(max(limit, 1), 20))
+    return {
+        "contacts": [
+            {
+                "email": contact.email,
+                "display_name": contact.display_name,
+                "label": f"{contact.display_name} <{contact.email}>" if contact.display_name else contact.email,
+                "insert_value": f"{contact.display_name} <{contact.email}>" if contact.display_name else contact.email,
+            }
+            for contact in contacts
+        ]
+    }
+
+
+@app.get("/api/signature-preview")
+def signature_preview_api() -> dict[str, str]:
+    return {"html": build_signature_html()}
+
+
 @app.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request, db: Session = Depends(get_db_session)):
     search_text = (request.query_params.get("search") or "").strip()
@@ -366,6 +405,7 @@ def queue_page(request: Request, db: Session = Depends(get_db_session)):
     selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
     try:
         ensure_default_mailbox(db, settings)
+        refresh_mailboxes_for_portal_if_stale(db, settings)
         sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
         messages = list_queue_messages(
             db,
@@ -438,6 +478,7 @@ def queue_selection_partial(request: Request, db: Session = Depends(get_db_sessi
     )
     try:
         ensure_default_mailbox(db, settings)
+        refresh_mailboxes_for_portal_if_stale(db, settings)
         sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
         selected_message = None
         if selected_id is not None:
@@ -490,6 +531,7 @@ def history_page(request: Request, db: Session = Depends(get_db_session)):
     selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
     try:
         ensure_default_mailbox(db, settings)
+        refresh_mailboxes_for_portal_if_stale(db, settings)
         sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
         messages = list_history_messages(db, tab=tab, search_text=search_text, ignored_scope=ignored_scope)
         selected_message = None
@@ -539,6 +581,7 @@ def history_selection_partial(request: Request, db: Session = Depends(get_db_ses
     selected_id = int(selected_message_id) if selected_message_id and selected_message_id.isdigit() else None
     try:
         ensure_default_mailbox(db, settings)
+        refresh_mailboxes_for_portal_if_stale(db, settings)
         sync_taxonomy_catalog(db, settings.taxonomy_catalog_path)
         selected_message = None
         if selected_id is not None:
@@ -674,6 +717,10 @@ async def save_message_draft_action(message_id: int, request: Request, db: Sessi
         draft_data = parse_draft_form(body)
         save_message_draft(db, settings, message_id, **draft_data)
         return RedirectResponse(url=build_redirect_url(return_to, saved="1"), status_code=303)
+    except ValueError:
+        rollback_session(db)
+        logger.exception("Draft save blocked for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="blank_draft_blocked"), status_code=303)
     except Exception:
         rollback_session(db)
         logger.exception("Draft save failed for message %s.", message_id)
@@ -711,6 +758,10 @@ async def send_message_action(message_id: int, request: Request, db: Session = D
         send_data = parse_send_form(body)
         update_message_review(db, message_id, **review_data)
         send_reply_message(db, settings, message_id, **send_data)
+    except ValueError:
+        rollback_session(db)
+        logger.exception("Portal send blocked for message %s.", message_id)
+        return RedirectResponse(url=build_redirect_url(return_to, error="blank_draft_blocked"), status_code=303)
     except HttpError as exc:
         rollback_session(db)
         if exc.resp is not None and exc.resp.status == 403:

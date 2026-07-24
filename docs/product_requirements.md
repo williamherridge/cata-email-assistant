@@ -439,6 +439,7 @@ The architecture phase should explicitly compare low-cost options such as:
 
 ## 14. Current requirements decisions
 
+- Current deterministic category coverage is documented in `docs/requirements/deterministic_rules.md`.
 - Initial taxonomy source: categories created through the existing taxonomy review app.
 - Taxonomy shape: categories and subcategories describe workflow or request type; topics describe subject matter for RAG, reporting, and analysis.
 - Category cardinality: MVP uses exactly one primary category and zero or one subcategory per message.

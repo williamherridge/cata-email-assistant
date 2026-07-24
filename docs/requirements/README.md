@@ -9,5 +9,6 @@ Suggested contents:
 - glossary
 - user stories
 - domain rules inventory
+- deterministic rules reference
 - MVP backlog candidates
 - open questions and decisions

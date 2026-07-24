@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from src.shared.models import Category, Message
 
 MAKEUP_LINEUP_CATEGORY = "Make-up match line up"
+MAKEUP_DATE_FORM_CATEGORY = "Make-up date form"
 TEAM_REGISTRATION_CATEGORY = "Team registration submission"
 FACILITY_REQUEST_CATEGORY = "Facility Request"
 INELIGIBLE_LEAGUE_PLAYER_FORM_CATEGORY = "Ineligible League Player Form"
 UTW_SUBCATEGORY = "UT-W"
 REPLY_PREFIXES = ("re:", "fw:", "fwd:")
 MAKEUP_LINEUP_SUBJECT_PREFIX = "make-up match line up from"
+MAKEUP_DATE_FORM_SUBJECT_PREFIX = "new submission from make up match date notification"
 UTW_FACILITY_REQUEST_SUBJECT_PREFIX = "ut-w league facility request from"
 INELIGIBLE_LEAGUE_PLAYER_FORM_SUBJECT_PREFIX = "❗️ ineligible league player form"
 MAKEUP_LINEUP_SENDERS = {
@@ -37,6 +39,10 @@ MAKEUP_LINEUP_REQUIRED_BODY_MARKERS = (
     "captain's name",
     "opposing captain",
 )
+MAKEUP_DATE_FORM_REQUIRED_BODY_MARKERS = (
+    "match id",
+    "date for doubles 1",
+)
 TEAM_REGISTRATION_REQUIRED_BODY_MARKERS = (
     "captain name",
     "captain usta number",
@@ -58,6 +64,9 @@ class ClassificationResult:
 
 
 def classify_message_deterministically(message: Message, body_text: str) -> ClassificationResult | None:
+    result = classify_makeup_date_form(message, body_text)
+    if result is not None:
+        return result
     result = classify_makeup_match_lineup(message, body_text)
     if result is not None:
         return result
@@ -71,6 +80,37 @@ def classify_message_deterministically(message: Message, body_text: str) -> Clas
     if result is not None:
         return result
     return None
+
+
+def classify_makeup_date_form(message: Message, body_text: str) -> ClassificationResult | None:
+    from_address = (message.from_address or "").strip().casefold()
+    subject = (message.subject or "").strip()
+    subject_lower = subject.casefold()
+
+    if from_address not in MAKEUP_LINEUP_SENDERS:
+        return None
+    if subject_lower.startswith(REPLY_PREFIXES):
+        return None
+    if not subject_lower.startswith(MAKEUP_DATE_FORM_SUBJECT_PREFIX):
+        return None
+
+    normalized_body = body_text.casefold()
+    if not all(marker in normalized_body for marker in MAKEUP_DATE_FORM_REQUIRED_BODY_MARKERS):
+        return None
+
+    return ClassificationResult(
+        category_name=MAKEUP_DATE_FORM_CATEGORY,
+        subcategory_name=None,
+        reply_needed=False,
+        informational_only=True,
+        priority="low",
+        auto_ignore=True,
+        reason_summary=(
+            "Matched the structured make-up date form based on sender, subject prefix, "
+            "and required body markers."
+        ),
+        rule_code="makeup_date_form_v1",
+    )
 
 
 def classify_makeup_match_lineup(message: Message, body_text: str) -> ClassificationResult | None:
